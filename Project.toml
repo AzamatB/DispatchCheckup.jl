@@ -1,0 +1,14 @@
+name = "DispatchCheckup"
+uuid = "ca055ede-32eb-4961-937e-82d9c5ec6430"
+version = "0.1.0"
+authors = ["Azamat Berdyshev <aberdysh@gmail.com>"]
+
+[deps]
+DispatchDoctor = "8d63f2c5-f18a-4cf2-ba9d-b3f60fc568c8"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
+
+[compat]
+DispatchDoctor = "0.4.29"
+InteractiveUtils = "1.11.0"
+MacroTools = "0.5.16"
