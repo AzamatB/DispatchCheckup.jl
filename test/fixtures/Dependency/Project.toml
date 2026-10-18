@@ -1,0 +1,6 @@
+name = "DCFixtureDependency"
+uuid = "a17f895a-3e09-4af6-8a93-4f47cf707c98"
+version = "0.1.0"
+
+[compat]
+julia = "1.10"

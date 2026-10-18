@@ -1,7 +1,60 @@
+"""
+Run DispatchDoctor checks in a temporary package environment without changing
+the package's production source. Importing DispatchCheckup performs no setup.
+"""
 module DispatchCheckup
 
-using InteractiveUtils
-using MacroTools
-using DispatchDoctor
+public dispatch_doctor
+
+const _implementation_lock = ReentrantLock()
+
+function _implementation()
+    lock(_implementation_lock) do
+        if !Base.invokelatest(isdefined, @__MODULE__, :Implementation)
+            Base.include(@__MODULE__, joinpath(@__DIR__, "implementation.jl"))
+        end
+        return Base.invokelatest(getglobal, @__MODULE__, :Implementation)
+    end
+end
+
+"""
+    dispatch_doctor(package::Symbol; unstable=(), kwargs...)
+
+Run the current test entry point against an instrumented view of `package`.
+Call this before importing the package under test. Unqualified names in
+`unstable`, such as `(:foo, :bar)`, select `MyPackage.foo` and `MyPackage.bar`
+when `package == :MyPackage`.
+
+The enabled run uses a fresh process and temporary package environment. The
+parent forwards the child's exit status instead of running the tests twice.
+Commenting out this call leaves ordinary testing unchanged; importing
+DispatchCheckup alone does not load DispatchDoctor or change the environment.
+
+# Example
+```julia
+import DispatchCheckup
+DispatchCheckup.dispatch_doctor(:MyPackage; unstable=(:foo, :bar))
+using Test, MyPackage
+```
+"""
+function dispatch_doctor(package::Symbol; unstable=(), kwargs...)
+    implementation = _implementation()
+    entrypoint = Base.invokelatest(getglobal, implementation, :dispatch_doctor)
+    return Base.invokelatest(entrypoint, package; unstable, kwargs...)
+end
+
+# These bridges are used only by generated launch/entry files. Keeping the
+# implementation lazy also makes ordinary `import DispatchCheckup` inert.
+function _child_main(config_file::String)
+    implementation = _implementation()
+    entrypoint = Base.invokelatest(getglobal, implementation, :child_main)
+    return Base.invokelatest(entrypoint, config_file)
+end
+
+function _instrument_entry(mod::Module, config_file::String, source::String)
+    implementation = _implementation()
+    entrypoint = Base.invokelatest(getglobal, implementation, :instrument_entry)
+    return Base.invokelatest(entrypoint, mod, config_file, source)
+end
 
 end # module DispatchCheckup
