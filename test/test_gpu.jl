@@ -23,6 +23,14 @@ CUDA.@sync @cuda threads=1 DCFixtureGPU.wide_kernel!(wide_output, wide_args...)
 @test only(Array(wide_output)) == 37.0
 CUDA.@sync @cuda threads=1 DCFixtureGPU.override_kernel!(wide_output, 3.0, 7.0)
 @test only(Array(wide_output)) == 21.0
+typed_output = CUDA.zeros(Float64, 3)
+typed_x = CUDA.ones(Float64, 3)
+typed_matrix = CUDA.ones(Float64, 6, 3)
+typed_indices = CUDA.ones(Int32, 4)
+CUDA.@sync @cuda threads=3 DCFixtureGPU.typed_val_kernel!(typed_output, typed_x,
+    typed_matrix, typed_matrix, typed_output, typed_indices, typed_matrix,
+    typed_indices, typed_indices, typed_indices, typed_x, Int32(3), Val(true), Val(false))
+@test Array(typed_output) == fill(2.0, 3)
 """
 
 @testset "DispatchCheckup native CUDA qualification" begin

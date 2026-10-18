@@ -136,7 +136,7 @@ end
         write_toml(project_file, original_project)
         write_toml(preference_file, Dict(
             "PreferenceTarget" => Dict("dispatch_doctor_mode" => "disable",
-                "dispatch_doctor_union_limit" => 9, "dispatch_doctor_codegen_level" => "debug",
+                "dispatch_doctor_union_limit" => 9, "dispatch_doctor_codegen_level" => "min",
                 "backend" => "fixture"),
             "PreferenceOther" => Dict("threads" => 7)))
         original_bytes = read(preference_file)
@@ -149,7 +149,7 @@ end
             preferences = _call(:_temporary_preferences!, project, manifest, Base.PkgId(uuid, "PreferenceTarget"))
             @test preferences["PreferenceTarget"]["dispatch_doctor_mode"] == "error"
             @test preferences["PreferenceTarget"]["dispatch_doctor_union_limit"] == 1
-            @test preferences["PreferenceTarget"]["dispatch_doctor_codegen_level"] == "min"
+            @test preferences["PreferenceTarget"]["dispatch_doctor_codegen_level"] == "debug"
             @test preferences["PreferenceTarget"]["backend"] == "fixture"
             @test preferences["PreferenceOther"]["threads"] == 7
             @test read(preference_file) == original_bytes

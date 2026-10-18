@@ -60,7 +60,7 @@ function _instrumentation_context(config_file::AbstractString)
             InstrumentationContext(config_file, target, UUID(config["target_uuid"]),
                 realpath(config["original_root"]), realpath(config["overlay_root"]),
                 realpath(config["snapshot_root"]), abspath(config["main_entry"]),
-                get(config, "require_all", false), get(config, "codegen_level", "min"),
+                get(config, "require_all", false), get(config, "codegen_level", "debug"),
                 get(config, "union_limit", 1), exclusions, Set{String}(), Set{String}(),
                 Set{Module}(), Set{Module}(), InstrumentationRecord[], shims, extension_names,
                 Dict{Tuple{Task,Module,String},Int}(), IncludeObservation[], ReentrantLock())
@@ -191,7 +191,9 @@ function _definition(ex)
     ex isa Expr || return nothing
     MacroTools.isdef(ex) || return nothing
     try
-        return MacroTools.splitdef(MacroTools.longdef(ex))
+        # Normalize the declaration only. Recursive longdef rewrites typed
+        # arrow closures inside the body into invalid anonymous signatures.
+        return MacroTools.splitdef(ex)
     catch error
         error isa InterruptException && rethrow()
         return nothing
@@ -314,7 +316,7 @@ end
 
 # DispatchDoctor 0.4.29 emits an unqualified ! in its generated checker.
 # A baremodule need not import Base. Qualify that wrapper-only helper without
-# changing the simulator (which contains the user's original body).
+# changing either copy of the user's original body.
 function _qualify_generated_negation(ex)
     ex isa Expr || return ex
     ex.head == :quote && return ex
@@ -328,7 +330,13 @@ function _qualify_doctor_wrapper(ex, wanted)
     if ex.head == :function || (ex.head == :(=) && MacroTools.isdef(ex))
         def = _definition(ex)
         if def !== nothing && _syntax_name(get(def, :name, nothing)) == wanted
-            def[:body] = _qualify_generated_negation(def[:body])
+            body = def[:body]
+            if body isa Expr && body.head === :block
+                # The final expression is DispatchDoctor's caller/original body.
+                # Only the preceding generated checker needs Base's negation.
+                def[:body] = Expr(:block,
+                    map(_qualify_generated_negation, body.args[1:end-1])..., last(body.args))
+            end
             return MacroTools.combinedef(def)
         end
         return ex
@@ -339,8 +347,16 @@ end
 # Base.map switches to a dynamically allocated buffer for long tuples. A checker
 # must preserve the argument-type tuple even for kernels with many arguments.
 # Keep DispatchDoctor's Type/Val handling and build the tuple at its known size.
-@inline function _specializing_types(args::Tuple{Vararg{Any,N}}) where {N}
-    ntuple(i -> DispatchDoctor.specializing_typeof(args[i]), Val(N))
+@generated function _specializing_types(args::T) where {T<:Tuple}
+    count = try
+        fieldcount(T)
+    catch
+        # An abstract, unbounded tuple has no statically known signature.
+        return :(map(DispatchDoctor.specializing_typeof, args))
+    end
+    elements = [Expr(:call, GlobalRef(DispatchDoctor, :specializing_typeof),
+                     Expr(:call, GlobalRef(Core, :getfield), :args, index)) for index in 1:count]
+    return Expr(:block, Expr(:meta, :inline), Expr(:tuple, elements...))
 end
 
 @inline function _specializing_keywords(kwargs::NamedTuple{Keys}) where {Keys}
@@ -356,8 +372,17 @@ function _specialize_doctor_arguments(ex)
     args = map(_specialize_doctor_arguments, ex.args)
     if ex.head === :call && !isempty(args)
         value = _callee_value(args[1])
-        value === DispatchDoctor._Utils.map_specializing_typeof &&
-            (args[1] = GlobalRef(@__MODULE__, :_specializing_types))
+        if value === DispatchDoctor._Utils.map_specializing_typeof
+            tuple = length(args) == 2 ? args[2] : nothing
+            if tuple isa Expr && tuple.head === :tuple &&
+               !any(arg -> arg isa Expr && arg.head === :..., tuple.args)
+                # Preserve Type{T} before tuple construction can widen it to
+                # DataType. Known argument lists need no mapping helper.
+                return Expr(:tuple, (Expr(:call, GlobalRef(DispatchDoctor, :specializing_typeof), arg)
+                                     for arg in tuple.args)...)
+            end
+            args[1] = GlobalRef(@__MODULE__, :_specializing_types)
+        end
         if value === DispatchDoctor._Utils._promote_op && length(args) == 5 &&
            (_callee_value(args[2]) === Core.kwcall || args[2] == :(Core.kwcall))
             keyword_type = args[3]
@@ -371,13 +396,37 @@ function _specialize_doctor_arguments(ex)
     return Expr(ex.head, args...)
 end
 
+function _restore_doctor_sources(ex, original, line::LineNumberNode)
+    ex isa Expr || return ex
+    if MacroTools.isdef(ex)
+        generated = _definition(ex)
+        generated === nothing && return ex
+        wanted = _syntax_name(get(original, :name, nothing))
+        name = get(generated, :name, nothing)
+        if name isa Symbol && startswith(String(name), "##" * wanted * "_simulator#")
+            # Native debug codegen strips all source nodes from the simulator,
+            # including macro locations required by command literals and @__DIR__.
+            generated[:body] = deepcopy(original[:body])
+        elseif _syntax_name(name) == wanted
+            body = generated[:body]
+            generated[:body] = body isa Expr && body.head === :block ?
+                Expr(:block, line, body.args...) : Expr(:block, line, body)
+        else
+            return ex
+        end
+        return MacroTools.combinedef(generated)
+    end
+    return Expr(ex.head, map(arg -> _restore_doctor_sources(arg, original, line), ex.args)...)
+end
+
 function _expand_stable(ctx, mod, definition, line)
     expanded = _specialize_doctor_arguments(
         Base.macroexpand(mod, _stable_expression(ctx, definition, line); recursive=false))
-    if !isdefined(mod, :!) && ctx.codegen_level == "min"
-        def = _definition(definition)
-        def === nothing || (expanded = _qualify_doctor_wrapper(expanded,
-            _syntax_name(get(def, :name, nothing))))
+    original = _definition(definition)
+    original === nothing || (expanded = _restore_doctor_sources(expanded, original, line))
+    if !isdefined(mod, :!)
+        original === nothing || (expanded = _qualify_doctor_wrapper(expanded,
+            _syntax_name(get(original, :name, nothing))))
     end
     return expanded
 end

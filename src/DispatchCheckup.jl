@@ -4,7 +4,7 @@ the package's production source. Importing DispatchCheckup performs no setup.
 """
 module DispatchCheckup
 
-public dispatch_doctor, source_root
+public dispatch_doctor, source_root, test_original
 
 const _implementation_lock = ReentrantLock()
 
@@ -60,11 +60,37 @@ function source_root(package::Module)
     return pkgdir(package)
 end
 
+"""
+    test_original(; test_args=String[], env=Pair[]) -> Bool
+
+During a checked run, run the same test entrypoint in a fresh process using the
+original resolved environment and package source. Pass the test suite's normal
+selectors through `test_args` or additional string environment pairs through
+`env`. A failing subprocess propagates its exit status. Successful runs return
+`true` and are recorded in the instrumentation report.
+
+During ordinary testing this returns `false` without loading the implementation,
+so `test_original(test_args=["test_guards.jl"]) || include("test_guards.jl")`
+checks production code in either mode. This does not resolve or install packages.
+"""
+function test_original(; test_args=String[], env=Pair[])
+    Base.invokelatest(isdefined, @__MODULE__, :Implementation) || return false
+    implementation = Base.invokelatest(getglobal, @__MODULE__, :Implementation)
+    entrypoint = Base.invokelatest(getglobal, implementation, :test_original)
+    return Base.invokelatest(entrypoint; test_args, env)
+end
+
 # These bridges are used only by generated launch/entry files. Keeping the
 # implementation lazy also makes ordinary `import DispatchCheckup` inert.
 function _child_main(config_file::String)
     implementation = _implementation()
     entrypoint = Base.invokelatest(getglobal, implementation, :child_main)
+    return Base.invokelatest(entrypoint, config_file)
+end
+
+function _original_main(config_file::String)
+    implementation = _implementation()
+    entrypoint = Base.invokelatest(getglobal, implementation, :original_main)
     return Base.invokelatest(entrypoint, config_file)
 end
 

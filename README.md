@@ -77,6 +77,39 @@ checks alongside this tool. Also retain an ordinary test run for production
 performance measurements: instrumentation can change compilation and allocation
 behavior.
 
+The temporary instrumentation uses DispatchDoctor's `debug` code generation,
+which retains the original function body alongside its inference simulator.
+This preserves inference through parametric keyword constructors; the smaller
+`min` wrapper can introduce boxed simulator captures in those constructors.
+
+JET and allocation or source guards should inspect production code, rather than
+the checker's reflective wrappers. Delegate those test files through the same
+test entrypoint:
+
+```julia
+DispatchCheckup.test_original(test_args=["test_guards.jl"]) ||
+    include("test_guards.jl")
+```
+
+The driver must accept the supplied selector and run its usual fixture setup.
+For an environment-based selector, use
+`DispatchCheckup.test_original(env=["MY_TEST_GROUP" => "guards"])`.
+The helper starts a fresh process with the original resolved project, load path,
+depot, package source, and execution flags; it does not resolve dependencies.
+Only that authenticated ordinary controller bypasses the recursive activation
+call. A nonzero child exit fails the checked run with the same exit status.
+Controller and project/load-path/depot variables cannot be overridden through
+`env`. The checked target is loaded before delegation if the driver has not
+imported it yet.
+
+When activation is commented out, `test_original` returns `false` without
+loading DispatchDoctor or starting a subprocess, so the existing include runs
+normally. It also returns `false` inside the ordinary child, preventing
+recursion. The report records these runs under `original_tests`, with their
+selectors, source/environment identity, exit status, and validation result.
+These records establish ordinary-source test results, not additional
+DispatchDoctor-exercised signatures.
+
 DispatchDoctor intentionally does not instrument every Julia construct.
 Recognized skips appear as diagnostics in the coverage report.
 Generated functions, some macro-generated definitions, and local closures need

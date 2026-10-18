@@ -322,6 +322,55 @@ end
     end
 end
 
+@testset "Callable storage remains concrete through inner constructors" begin
+    fixture(; extra="""
+        struct InnerFixture{F}
+            name::String
+            run::F
+            expected::Bool
+            function InnerFixture(name::AbstractString, run::F; expected=false) where {F}
+                new{F}(String(name), run, expected)
+            end
+        end
+        fixed_fixture() = InnerFixture("check", () -> nothing; expected=true)
+        """) do mod, _, _, _
+        result = _call(mod, :fixed_fixture)
+        @test result.expected
+        @test isconcretetype(only(Base.return_types(_latest(mod, :fixed_fixture), Tuple{})))
+        types = I._specializing_types(("check", result.run))
+        @test types == (String, typeof(result.run))
+        @test isconcretetype(fieldtype(typeof(result), :run))
+    end
+end
+
+@testset "Type arguments keep inference checks out of the runtime path" begin
+    fixture(; extra="""
+        typed_bytes(::Type{T}, n::Int) where {T} = sizeof(T) * n
+        typed_bytes_allocations() = @allocated typed_bytes(Float64, 4)
+        """) do mod, _, _, _
+        @test _call(mod, :typed_bytes, Float64, 4) == 32
+        _call(mod, :typed_bytes_allocations)
+        @test _call(mod, :typed_bytes_allocations) == 0
+    end
+end
+
+@testset "Debug simulators preserve macro and method source locations" begin
+    fixture(; extra="""
+        command_location() = `echo hello`
+        source_location() = (@__FILE__, @__DIR__)
+        typed_closure(offset::Int) = x::Int -> x + offset
+        """) do mod, _, original, _
+        expected = joinpath(original, "src", string(nameof(mod)) * ".jl")
+        @test _call(mod, :command_location).exec == ["echo", "hello"]
+        @test _call(mod, :source_location) == (expected, dirname(expected))
+        @test String(which(_latest(mod, :command_location), Tuple{}).file) == expected
+        @test String(which(_latest(mod, :source_location), Tuple{}).file) == expected
+        callback = _call(mod, :typed_closure, 3)
+        @test Base.invokelatest(callback, 4) == 7
+        @test_throws MethodError Base.invokelatest(callback, 4.0)
+    end
+end
+
 @testset "Documentation retains recursive instrumentation and source provenance" begin
     fixture(; documented=true, require_all=true,
             extra="\"Nested docs\"\nmodule Documented\n\"Method docs\"\nbad(x::Bool) = x ? 1 : 1.0\nend") do mod, config, original, _

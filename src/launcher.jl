@@ -9,6 +9,11 @@ struct ChildActivation
 end
 
 const _CHILD_ACTIVATION = Ref{Union{Nothing,ChildActivation}}(nothing)
+const _ORIGINAL_TESTS = Dict{String,Vector{Dict{String,Any}}}()
+const _ORIGINAL_TESTS_LOCK = ReentrantLock()
+
+_same_project(left::String, right::String) =
+    isfile(left) && isfile(right) ? realpath(left) == realpath(right) : abspath(left) == abspath(right)
 
 function _normalize_exclusions(unstable)
     unstable isa Tuple && all(item -> item isa Symbol, unstable) ||
@@ -65,9 +70,11 @@ function _validated_child_config(config_file::String; check_launch_state::Bool=t
     config = TOML.parsefile(config_file)
     get(config, "format_version", 0) == 1 || error("unsupported DispatchCheckup child configuration")
     config["token"] == ENV[CHILD_TOKEN_ENV] || error("DispatchCheckup child token does not match its launcher")
+    kind = get(config, "run_kind", "checked")
+    kind in ("checked", "original") || error("unsupported DispatchCheckup controller kind")
     if check_launch_state
         active = Base.active_project()
-        active !== nothing && realpath(active) == realpath(config["project_file"]) ||
+        active !== nothing && _same_project(active, config["project_file"]) ||
             error("DispatchCheckup child is not using its isolated project")
         pwd() == config["working_directory"] || error("DispatchCheckup child working directory changed before activation")
         ARGS == config["arguments"] || error("DispatchCheckup child arguments changed before activation")
@@ -80,11 +87,26 @@ function _validated_child_config(config_file::String; check_launch_state::Bool=t
         error("DispatchCheckup package overlay changed after the launch snapshot")
     _source_fingerprint(config["helper_overlay_root"]) == config["helper_overlay_digest"] ||
         error("DispatchCheckup helper overlay changed after the launch snapshot")
+    if kind == "original"
+        _original_source_fingerprint(config["original_root"], config["snapshot_root"]) == config["original_source_digest"] ||
+            error("DispatchCheckup original package source changed after activation")
+        for (file, digest) in config["original_environment_files"]
+            isfile(file) && bytes2hex(open(SHA.sha256, file)) == digest ||
+                error("DispatchCheckup original resolved environment changed: $file")
+        end
+        if check_launch_state
+            LOAD_PATH == config["original_load_path"] ||
+                error("DispatchCheckup original load path changed before activation")
+            DEPOT_PATH == config["original_depot_path"] ||
+                error("DispatchCheckup original depot path changed before activation")
+        end
+    end
     helper = get(Base.loaded_modules, Base.PkgId(CHECKUP_UUID, "DispatchCheckup"), nothing)
     helper !== nothing && realpath(pathof(helper)) == realpath(config["helper_entry"]) ||
         error("DispatchCheckup child loaded an unisolated helper package")
     id = Base.PkgId(UUIDs.UUID(config["target_uuid"]), config["target_name"])
-    expected = joinpath(config["overlay_root"], relpath(config["main_entry"], config["original_root"]))
+    expected = kind == "original" ? config["main_entry"] :
+        joinpath(config["overlay_root"], relpath(config["main_entry"], config["original_root"]))
     if check_launch_state
         found = Base.locate_package(id)
         found !== nothing && realpath(found) == realpath(expected) ||
@@ -100,15 +122,20 @@ function _validated_child_config(config_file::String; check_launch_state::Bool=t
     return config
 end
 
+function _active_controller(config_file::String, config::Dict{String,Any})
+    activation = _CHILD_ACTIVATION[]
+    activation !== nothing && activation.pid == getpid() &&
+        activation.config_file == abspath(config_file) && activation.token == config["token"] ||
+        error("DispatchCheckup child marker was inherited without its isolated test controller")
+    return activation
+end
+
 function _child_activation(name::Symbol, exclusions::Vector{String}; require_all::Bool,
                            entrypoint::Union{Nothing,AbstractString}, report::Union{Nothing,AbstractString})
     config_file = get(ENV, CHILD_CONFIG_ENV, "")
     isempty(config_file) && error("DispatchCheckup child marker has no configuration path")
     config = _validated_child_config(config_file)
-    activation = _CHILD_ACTIVATION[]
-    activation !== nothing && activation.pid == getpid() &&
-        activation.config_file == abspath(config_file) && activation.token == config["token"] ||
-        error("DispatchCheckup child marker was inherited without its isolated test controller")
+    _active_controller(config_file, config)
     config["target_name"] == String(name) || error("DispatchCheckup child was configured for a different package")
     config["unstable"] == exclusions || error("DispatchCheckup child exclusions do not match the activation request")
     config["require_all"] == require_all || error("DispatchCheckup child coverage policy does not match the activation request")
@@ -116,6 +143,154 @@ function _child_activation(name::Symbol, exclusions::Vector{String}; require_all
         error("DispatchCheckup child entrypoint does not match the activation request")
     report === nothing || abspath(report) == get(config, "report_destination", "") ||
         error("DispatchCheckup child report path does not match the activation request")
+    return nothing
+end
+
+function _original_options(test_args, env)
+    all(arg -> arg isa AbstractString, test_args) ||
+        throw(ArgumentError("test_args must contain strings"))
+    arguments = String[String(arg) for arg in test_args]
+    overrides = Dict{String,String}()
+    for pair in env
+        pair isa Pair && first(pair) isa AbstractString && last(pair) isa AbstractString ||
+            throw(ArgumentError("env must contain string environment pairs"))
+        name, value = String(first(pair)), String(last(pair))
+        (startswith(name, "DISPATCH_CHECKUP_") ||
+         name in ("JULIA_PROJECT", "JULIA_LOAD_PATH", "JULIA_DEPOT_PATH")) &&
+            throw(ArgumentError("test_original cannot override controller environment variable $name"))
+        overrides[name] = value
+    end
+    return arguments, overrides
+end
+
+function _original_command(config::Dict{String,Any}, config_file::String, overrides::Dict{String,String})
+    threads = join(config["original_threads"], ',')
+    arguments = String["--startup-file=no", "--history-file=no",
+        "--project=$(config["project_file"])", "--threads=$threads", config["bootstrap_file"]]
+    append!(arguments, config["arguments"])
+    command = Cmd(Cmd(vcat(String.(config["original_julia_command"]), arguments)); dir=config["working_directory"])
+    environment = Dict{String,String}(ENV)
+    merge!(environment, overrides)
+    separator = Sys.iswindows() ? ';' : ':'
+    environment["JULIA_PROJECT"] = config["project_file"]
+    environment["JULIA_LOAD_PATH"] = join(config["original_load_path"], separator)
+    environment["JULIA_DEPOT_PATH"] = join(config["original_depot_path"], separator)
+    environment[CHILD_CONFIG_ENV] = config_file
+    environment[CHILD_TOKEN_ENV] = config["token"]
+    environment[CHILD_DIGEST_ENV] = bytes2hex(open(SHA.sha256, config_file))
+    return setenv(command, environment)
+end
+
+function test_original(; test_args=String[], env=Pair[])
+    activation = _CHILD_ACTIVATION[]
+    activation === nothing && !_child_requested() && return false
+    config_file = get(ENV, CHILD_CONFIG_ENV, "")
+    isempty(config_file) && error("DispatchCheckup child marker has no configuration path")
+    config = _validated_child_config(config_file; check_launch_state=false)
+    _active_controller(config_file, config)
+    get(config, "run_kind", "checked") == "original" && return false
+    arguments, overrides = _original_options(test_args, env)
+    # Guard-only selectors may delegate before importing their target. Loading
+    # it here retains the normal loader/canary/coverage validation in this run.
+    id = Base.PkgId(UUIDs.UUID(config["target_uuid"]), config["target_name"])
+    Base.require(id)
+    _validated_child_config(config_file; check_launch_state=false)
+    root = mktempdir(dirname(config_file); prefix="original-")
+    original = deepcopy(config)
+    original["run_kind"] = "original"
+    original["token"] = string(UUIDs.uuid4())
+    original["project_file"] = config["original_project_file"]
+    original["helper_entry"] = config["original_helper_entry"]
+    original["arguments"] = arguments
+    original["bootstrap_file"] = joinpath(root, "launch.jl")
+    original["report_file"] = joinpath(root, "result.toml")
+    ordinary_config = joinpath(root, "config.toml")
+    _write_toml(ordinary_config, original)
+    write(original["bootstrap_file"], "import DispatchCheckup\n" *
+        "DispatchCheckup._original_main($(repr(ordinary_config)))\n")
+    record = Dict{String,Any}("test_entry" => config["test_entry"], "test_args" => arguments,
+        "env" => overrides, "project_file" => original["project_file"],
+        "target_entry" => config["main_entry"], "source_digest" => config["original_source_digest"])
+    status = 1
+    process = nothing
+    try
+        @info "DispatchCheckup original-source test run" package=config["target_name"] test_args=arguments env=overrides
+        command = pipeline(ignorestatus(_original_command(original, ordinary_config, overrides));
+                           stdin=stdin, stdout=stdout, stderr=stderr)
+        process = run(command; wait=false)
+        wait(process)
+        status = _exit_status(process)
+        record["exit_code"] = status
+        if isfile(original["report_file"])
+            result = TOML.parsefile(original["report_file"])
+            record["validation_status"] = result["validation_status"]
+            haskey(result, "validation_error") && (record["validation_error"] = result["validation_error"])
+        else
+            record["validation_status"] = "missing"
+        end
+        if status == 0 && record["validation_status"] != "passed"
+            record["exit_code"] = status = 1
+        end
+        lock(_ORIGINAL_TESTS_LOCK) do
+            push!(get!(() -> Dict{String,Any}[], _ORIGINAL_TESTS, config_file), record)
+        end
+    finally
+        if process !== nothing && process_running(process)
+            kill(process, Base.SIGKILL)
+            wait(process)
+        end
+        rm(root; recursive=true, force=true)
+    end
+    status == 0 || exit(status)
+    return true
+end
+
+function _finish_original(config_file::String; validate::Bool=true)
+    config = TOML.parsefile(config_file)
+    if !validate && isfile(config["report_file"]) &&
+       get(TOML.parsefile(config["report_file"]), "validation_status", "") == "failed"
+        return nothing
+    end
+    result = Dict{String,Any}("validation_status" => validate ? "passed" : "not_checked")
+    try
+        if validate
+            _validated_child_config(config_file; check_launch_state=false)
+            id = Base.PkgId(UUIDs.UUID(config["target_uuid"]), config["target_name"])
+            haskey(Base.loaded_modules, id) || error("original test run never loaded its target package")
+        end
+    catch exception
+        result["validation_status"] = "failed"
+        result["validation_error"] = sprint(showerror, exception)
+        rethrow()
+    finally
+        _write_toml(config["report_file"], result)
+    end
+    return nothing
+end
+
+function original_main(config_file::String)
+    config = _validated_child_config(config_file)
+    get(config, "run_kind", "checked") == "original" || error("expected an original-source controller")
+    abspath(PROGRAM_FILE) == config["bootstrap_file"] ||
+        error("original-source tests must start through their private controller")
+    _CHILD_ACTIVATION[] === nothing || error("DispatchCheckup original controller cannot run twice")
+    _CHILD_ACTIVATION[] = ChildActivation(abspath(config_file), config["token"], getpid())
+    finished = Ref(false)
+    atexit() do code
+        finished[] && return
+        finished[] = true
+        try
+            _finish_original(config_file; validate=code == 0)
+        catch exception
+            showerror(stderr, exception, catch_backtrace())
+            println(stderr)
+            code == 0 && exit(1)
+        end
+    end
+    Core.eval(Base, :(PROGRAM_FILE = $(config["program_file"])))
+    Base.include(Main, config["test_entry"])
+    _finish_original(config_file)
+    finished[] = true
     return nothing
 end
 
@@ -209,6 +384,9 @@ function _write_child_report(config_file::String, config::Dict{String,Any}, vali
     report["target_provenance"] = config["target_provenance"]
     report["doctor_provenance"] = config["doctor_provenance"]
     report["validation_status"] = validation_status
+    lock(_ORIGINAL_TESTS_LOCK) do
+        report["original_tests"] = deepcopy(get(_ORIGINAL_TESTS, config_file, Dict{String,Any}[]))
+    end
     validation_error === nothing || (report["validation_error"] = sprint(showerror, validation_error))
     _write_toml(config["report_file"], report)
     @info "DispatchCheckup instrumentation report" package=config["target_name"] counts=get(report, "counts", Dict())
@@ -248,6 +426,7 @@ end
 
 function child_main(config_file::String)
     config = _validated_child_config(config_file)
+    get(config, "run_kind", "checked") == "checked" || error("expected an instrumented controller")
     _CHILD_ACTIVATION[] === nothing || error("DispatchCheckup child controller cannot run the test suite twice")
     _CHILD_ACTIVATION[] = ChildActivation(abspath(config_file), config["token"], getpid())
     finished = Ref(false)
