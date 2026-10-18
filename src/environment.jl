@@ -245,6 +245,22 @@ function _source_fingerprint(root::String)
     return bytes2hex(SHA.sha256(join(sort!(records), '\n')))
 end
 
+function _original_source_fingerprint(root::String, snapshot::String)
+    records = String[]
+    # Check exactly the source/metadata files captured at activation, including
+    # materialized source aliases. Newly generated test fixtures are unrelated.
+    for (directory, _, files) in walkdir(snapshot; follow_symlinks=false), file in files
+        captured = joinpath(directory, file)
+        islink(captured) && continue
+        (endswith(lowercase(file), ".jl") || endswith(lowercase(file), ".toml")) || continue
+        relative = relpath(captured, snapshot)
+        source = joinpath(root, relative)
+        isfile(source) || error("original package source is missing: $source")
+        push!(records, relative * '\0' * bytes2hex(open(SHA.sha256, source)))
+    end
+    return bytes2hex(SHA.sha256(join(sort!(records), '\n')))
+end
+
 function _write_toml(path::String, data::Dict{String,Any})
     open(path, "w") do io
         TOML.print(io, data; sorted=true)
@@ -273,7 +289,7 @@ function _temporary_preferences!(project::Dict{String,Any}, manifest::Dict{Strin
         prefs = deepcopy(Base.get_preferences(uuid))
         uuid == target.uuid && merge!(prefs, Dict{String,Any}(
             "dispatch_doctor_mode" => "error", "dispatch_doctor_union_limit" => 1,
-            "dispatch_doctor_codegen_level" => "min"))
+            "dispatch_doctor_codegen_level" => "debug"))
         isempty(prefs) && continue
         alias = name
         existing = get(deps, alias, get(extras, alias, string(uuid)))
@@ -411,6 +427,11 @@ function _build_environment(target::PackageLocation, test_entry::String,
               "DispatchCheckup._child_main($(repr(config_file)))\n")
         token = string(UUIDs.uuid4())
         original_load_path = Base.load_path()
+        original_files = Dict{String,String}()
+        for environment in values(environments), file in
+                (environment.project_file, environment.manifest_file)
+            isfile(file) && (original_files[file] = bytes2hex(open(SHA.sha256, file)))
+        end
         # Keep the active-project marker rather than a literal path: package
         # tests can legitimately activate another environment, and tools such
         # as Aqua launch precompile workers with their own --project argument.
@@ -421,11 +442,19 @@ function _build_environment(target::PackageLocation, test_entry::String,
             "original_root" => target.root, "overlay_root" => overlay_root,
             "snapshot_root" => snapshot_root, "main_entry" => target.entry,
             "extension_entries" => extensions, "unstable" => exclusions,
-            "require_all" => require_all, "codegen_level" => "min", "union_limit" => 1,
+            "require_all" => require_all, "codegen_level" => "debug", "union_limit" => 1,
             "project_file" => project_file, "bootstrap_file" => bootstrap,
             "test_entry" => test_entry, "test_entry_digest" => bytes2hex(open(SHA.sha256, test_entry)),
             "program_file" => PROGRAM_FILE, "working_directory" => pwd(),
             "arguments" => copy(ARGS), "load_path" => child_load_path,
+            "original_project_file" => snapshot.project_file,
+            "original_load_path" => copy(LOAD_PATH),
+            "original_depot_path" => copy(DEPOT_PATH),
+            "original_julia_command" => copy(Base.julia_cmd().exec),
+            "original_threads" => [Threads.nthreads(:default), Threads.nthreads(:interactive)],
+            "original_environment_files" => original_files,
+            "original_source_digest" => _source_fingerprint(snapshot_root),
+            "original_helper_entry" => _locate_package(helper).entry,
             "snapshot_digest" => _source_fingerprint(snapshot_root),
             "overlay_digest" => _source_fingerprint(overlay_root),
             "helper_overlay_root" => helper_overlay.root,

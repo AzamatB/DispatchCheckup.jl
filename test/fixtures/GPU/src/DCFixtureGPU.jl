@@ -35,4 +35,14 @@ function override_kernel!(output, x, y)
     return nothing
 end
 
+function typed_val_kernel!(out, x, diag, off, pp, xord, exception, rowptr, colind,
+                           diagpos, mass, nc, ::Val{HAS_X}, ::Val{ADDM}) where {HAS_X,ADDM}
+    index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
+    if index <= nc
+        @inbounds out[index] = x[index] + (HAS_X ? off[1,index] : 0.0) +
+                              (ADDM ? mass[index] : 0.0)
+    end
+    return nothing
+end
+
 end
