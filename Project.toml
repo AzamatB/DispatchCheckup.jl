@@ -7,8 +7,10 @@ authors = ["Azamat Berdyshev <aberdysh@gmail.com>"]
 DispatchDoctor = "8d63f2c5-f18a-4cf2-ba9d-b3f60fc568c8"
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
+Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 
 [compat]
 DispatchDoctor = "0.4.29"
 InteractiveUtils = "1.11.0"
 MacroTools = "0.5.16"
+Preferences = "1.6.1"
