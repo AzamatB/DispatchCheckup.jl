@@ -11,6 +11,7 @@ const FIXTURE_UUIDS = Dict(
     "DCFixtureConsumer" => "f8f70f52-2994-4354-964a-a746e2b4b7d0",
     "DCFixtureSkipped" => "0fe9d090-7ca4-44c6-8024-89ad1aa4c999",
     "DCFixtureGPU" => "6689c958-80c0-4aa5-a751-21295d56c2ee",
+    "DCFixtureLoader_jll" => "94e6536c-02f5-4ae4-bc3a-88379ea87a97",
 )
 
 struct Sandbox
@@ -68,8 +69,8 @@ end
 function with_sandbox(f::F; gpu::Bool=false) where {F}
     mktempdir(; prefix="dispatchcheckup-fixtures-") do root
         packages = Dict{String,String}()
-        folders = gpu ? ("Dependency", "Target", "Consumer", "Skipped", "GPU") :
-                        ("Dependency", "Target", "Consumer", "Skipped")
+        folders = gpu ? ("Dependency", "Target", "Consumer", "Skipped", "GPU", "JLLLoader") :
+                        ("Dependency", "Target", "Consumer", "Skipped", "JLLLoader")
         for folder in folders
             destination = joinpath(root, folder)
             cp(joinpath(TEMPLATE_ROOT, folder), destination)

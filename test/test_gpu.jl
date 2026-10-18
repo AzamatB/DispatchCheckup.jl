@@ -17,6 +17,12 @@ input = CuArray(Float32[-2, -1, 0, 1, 2])
 output = similar(input)
 CUDA.@sync @cuda threads=32 DCFixtureGPU.stable_kernel!(output, input)
 @test Array(output) == Float32[-4, -2, 0, 2, 4]
+wide_output = CUDA.zeros(Float64, 1)
+wide_args = ntuple(Float64, 36)
+CUDA.@sync @cuda threads=1 DCFixtureGPU.wide_kernel!(wide_output, wide_args...)
+@test only(Array(wide_output)) == 37.0
+CUDA.@sync @cuda threads=1 DCFixtureGPU.override_kernel!(wide_output, 3.0, 7.0)
+@test only(Array(wide_output)) == 21.0
 """
 
 @testset "DispatchCheckup native CUDA qualification" begin

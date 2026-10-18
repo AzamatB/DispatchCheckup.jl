@@ -63,6 +63,17 @@ end
 
 @testset "DispatchCheckup package-loader integration" begin
     DCF.with_sandbox() do sandbox
+        @testset "JLLWrappers platform includes stay instrumented" begin
+            result = DCF.run_script(sandbox, "jll-loader", raw"""
+                using Test, DCFixtureLoader_jll
+                @test DCFixtureLoader_jll.stable(2) == 3
+                failure = try DCFixtureLoader_jll.unstable(true) catch exception; exception end
+                @test nameof(typeof(failure)) === :TypeInstabilityError
+                @test DispatchCheckup.source_root(DCFixtureLoader_jll) != pkgdir(DCFixtureLoader_jll)
+                """; target=:DCFixtureLoader_jll)
+            check_success(result)
+            check_cleaned_overlay(result, sandbox)
+        end
         ordinary_body = FIXTURE_IMPORTS * """
             @test !fixture_loaded("DispatchDoctor")
             @test Base.active_project() == fixture_original_project
