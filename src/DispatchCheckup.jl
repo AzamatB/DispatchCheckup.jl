@@ -4,7 +4,7 @@ the package's production source. Importing DispatchCheckup performs no setup.
 """
 module DispatchCheckup
 
-public dispatch_doctor
+public dispatch_doctor, source_root
 
 const _implementation_lock = ReentrantLock()
 
@@ -41,6 +41,23 @@ function dispatch_doctor(package::Symbol; unstable=(), kwargs...)
     implementation = _implementation()
     entrypoint = Base.invokelatest(getglobal, implementation, :dispatch_doctor)
     return Base.invokelatest(entrypoint, package; unstable, kwargs...)
+end
+
+"""
+    source_root(package::Module)
+
+Return the original package source directory during an instrumented run, or
+`pkgdir(package)` during ordinary testing. Source-analysis guards can use this
+to match original method locations without treating the temporary overlay as
+the package's source checkout. This query does not activate instrumentation.
+"""
+function source_root(package::Module)
+    if Base.invokelatest(isdefined, @__MODULE__, :Implementation)
+        implementation = Base.invokelatest(getglobal, @__MODULE__, :Implementation)
+        query = Base.invokelatest(getglobal, implementation, :original_source_root)
+        return Base.invokelatest(query, package)
+    end
+    return pkgdir(package)
 end
 
 # These bridges are used only by generated launch/entry files. Keeping the

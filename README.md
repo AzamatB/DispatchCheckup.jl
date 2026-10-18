@@ -66,6 +66,9 @@ and execution settings. Temporary preferences enable checking even when the
 original environment disables it;
 the original preferences remain unchanged. Instrumented package loading uses
 isolated writable state and verifies that the intended source is loaded.
+Tests that inspect original source files can call `DispatchCheckup.source_root(MyPackage)`;
+it returns the original checkout during instrumentation and `pkgdir(MyPackage)`
+otherwise, without activating checks.
 
 DispatchDoctor checks inferred **return types for the signatures exercised by
 the tests**. A function can return a concrete type while still doing dynamic
@@ -92,12 +95,19 @@ bypasses fail with a diagnostic. Arbitrary
 reflection, dynamically generated code, and definitions created in separate
 worker processes are not exhaustively covered. `require_all=true` rejects
 recognized gaps in loaded source; it is not a proof of complete runtime coverage.
+JLLWrappers platform-loader macros map their selected source includes too. The
+private JLL test overlay enables inference for those checks; third-party
+generated loader helpers remain explicitly reported coverage gaps.
 
 CUDA kernels with stable checked calls can compile successfully. A checked
 device function with an unstable return may instead fail GPU compilation when
 DispatchDoctor's host-side error path is retained. This is not a device-native
 replacement for CUDA inference diagnostics. Use explicit exclusions where
 appropriate, and qualify GPU behavior with actual device tests.
+The checker preserves argument-type tuples for kernels with many arguments.
+CUDA device overrides and other method-table overlays are retained as explicit
+coverage gaps: DispatchDoctor's host inference cannot safely check their separate
+method tables. Ordinary kernels and the corresponding host methods remain checked.
 
 The temporary environment is a testing mechanism, not an operating-system
 sandbox. Package and test code retain their ordinary filesystem permissions.

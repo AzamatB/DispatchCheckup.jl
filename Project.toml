@@ -1,6 +1,6 @@
 name = "DispatchCheckup"
 uuid = "ca055ede-32eb-4961-937e-82d9c5ec6430"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Azamat Berdyshev <aberdysh@gmail.com>"]
 
 [deps]
@@ -25,15 +25,21 @@ Test = "1"
 Aqua = "1"
 CheckConcreteStructs = "0.1"
 Distributed = "1"
+JLLWrappers = "1.7"
+Artifacts = "1"
+Libdl = "1"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 CheckConcreteStructs = "73c92db5-9da6-4938-911a-6443a7e94a58"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+JLLWrappers = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
+Artifacts = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 
 [targets]
-test = ["Test", "Aqua", "CheckConcreteStructs", "Distributed"]
+test = ["Test", "Aqua", "CheckConcreteStructs", "Distributed", "JLLWrappers", "Artifacts", "Libdl"]
 
 [sources]
 Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "24dd3cbe746633f58cd5bd988d5a9ba6cbd6a6c8"}

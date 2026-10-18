@@ -336,8 +336,44 @@ function _qualify_doctor_wrapper(ex, wanted)
     return Expr(ex.head, map(arg -> _qualify_doctor_wrapper(arg, wanted), ex.args)...)
 end
 
+# Base.map switches to a dynamically allocated buffer for long tuples. A checker
+# must preserve the argument-type tuple even for kernels with many arguments.
+# Keep DispatchDoctor's Type/Val handling and build the tuple at its known size.
+@inline function _specializing_types(args::Tuple{Vararg{Any,N}}) where {N}
+    ntuple(i -> DispatchDoctor.specializing_typeof(args[i]), Val(N))
+end
+
+@inline function _specializing_keywords(kwargs::NamedTuple{Keys}) where {Keys}
+    NamedTuple{Keys,Tuple{_specializing_types(values(kwargs))...}}
+end
+
+_callee_value(callee) = callee isa GlobalRef && isdefined(callee.mod, callee.name) ?
+    Base.invokelatest(getglobal, callee.mod, callee.name) : callee
+
+function _specialize_doctor_arguments(ex)
+    ex isa Expr || return ex
+    ex.head === :quote && return ex
+    args = map(_specialize_doctor_arguments, ex.args)
+    if ex.head === :call && !isempty(args)
+        value = _callee_value(args[1])
+        value === DispatchDoctor._Utils.map_specializing_typeof &&
+            (args[1] = GlobalRef(@__MODULE__, :_specializing_types))
+        if value === DispatchDoctor._Utils._promote_op && length(args) == 5 &&
+           (_callee_value(args[2]) === Core.kwcall || args[2] == :(Core.kwcall))
+            keyword_type = args[3]
+            if keyword_type isa Expr && keyword_type.head === :call &&
+               length(keyword_type.args) == 2 &&
+               (keyword_type.args[1] === :typeof || _callee_value(keyword_type.args[1]) === typeof)
+                args[3] = Expr(:call, GlobalRef(@__MODULE__, :_specializing_keywords), keyword_type.args[2])
+            end
+        end
+    end
+    return Expr(ex.head, args...)
+end
+
 function _expand_stable(ctx, mod, definition, line)
-    expanded = Base.macroexpand(mod, _stable_expression(ctx, definition, line); recursive=false)
+    expanded = _specialize_doctor_arguments(
+        Base.macroexpand(mod, _stable_expression(ctx, definition, line); recursive=false))
     if !isdefined(mod, :!) && ctx.codegen_level == "min"
         def = _definition(definition)
         def === nothing || (expanded = _qualify_doctor_wrapper(expanded,
@@ -449,7 +485,9 @@ const _NONDEFINING_MACROS = Set(Symbol.(
      "@info", "@warn", "@error", "@debug", "@show", "@time", "@timed", "@elapsed",
      "@allocated", "@allocations", "@inbounds", "@boundscheck")))
 const _KNOWN_SKIPPED_MACROS = Set((Symbol("@generated"), Symbol("@eval"), Symbol("@opaque"),
-    Symbol("@assume_effects"), Symbol("@pure"), Symbol("@kwdef"), Symbol("@enum"), Symbol("@deprecate")))
+    Symbol("@assume_effects"), Symbol("@pure"), Symbol("@kwdef"), Symbol("@enum"), Symbol("@deprecate"),
+    Symbol("@device_override"), Symbol("@device_function"), Symbol("@device_functions"),
+    Symbol("@overlay"), Symbol("@consistent_overlay")))
 const _BASE_LITERAL_MACROS = Set(Symbol.(
     ("@v_str", "@r_str", "@s_str", "@b_str", "@raw_str", "@big_str",
      "@int128_str", "@uint128_str", "@MIME_str", "@html_str", "@text_str")))
@@ -463,6 +501,33 @@ macro _literal_expression(config_file, file, line, expression)
             "opaque macro $(name) may generate unchecked definitions")
     end
     return esc(expression)
+end
+
+macro _jll_expression(config_file, file, line, expression)
+    ctx = _instrumentation_context(config_file)
+    macro_function = _binding(__module__, expression.args[1])
+    if !(macro_function isa Function) ||
+       Base.PkgId(parentmodule(macro_function)).uuid != UUID("692b3bcd-3c85-4b1f-b108-f13ce0eb3210")
+        _record!(ctx, :unsupported, string(__module__) * ".<macro>", file, line,
+            "unrecognized JLL loader macro binding")
+        return esc(expression)
+    end
+    expanded = Base.macroexpand(__module__, expression; recursive=false)
+    # The generated loader chooses a platform file at runtime. Map those native
+    # includes too; the dependency's own generated helper definitions remain a
+    # visible coverage gap, rather than masquerading as handwritten target code.
+    _contains_definition(expanded) && _record!(ctx, :unsupported,
+        string(__module__) * ".<JLLWrappers>", file, line,
+        "JLLWrappers-generated helper definitions are not source-instrumented")
+    mapped = _rewrite_calls(ctx, expanded, string(__module__), file, line)
+    if _macro_name(expression.args[1]) == Symbol("@generate_main_file_header")
+        # JLLWrappers deliberately disables inference for fast ordinary loading.
+        # Its private testing overlay needs inference for the inserted checks.
+        enable = Expr(:call, GlobalRef(Core, :eval), __module__,
+            QuoteNode(:(Base.Experimental.@compiler_options infer=true)))
+        mapped = Expr(:block, mapped, enable)
+    end
+    return esc(mapped)
 end
 
 function _check_include_string_value(value, file, line)
@@ -634,8 +699,17 @@ function _transform_expression(ctx, ex, scope, file, line)
     elseif ex.head == :macrocall
         name = _macro_name(ex.args[1])
         if ex.args[1] isa GlobalRef && ex.args[1].mod === (@__MODULE__) &&
-           name in (Symbol("@_instrumented_definition"), Symbol("@_skipped_definition"), Symbol("@_literal_expression"))
+           name in (Symbol("@_instrumented_definition"), Symbol("@_skipped_definition"), Symbol("@_literal_expression"), Symbol("@_jll_expression"))
             return ex
+        elseif name in (Symbol("@generate_main_file_header"), Symbol("@generate_main_file"))
+            return Expr(:macrocall, GlobalRef(@__MODULE__, Symbol("@_jll_expression")),
+                LineNumberNode(line, Symbol(file)), ctx.config_file, file, line, ex)
+        elseif name == Symbol("@doc") && length(ex.args) >= 4
+            # Keep documentation attached while mapping the actual declaration,
+            # including documented modules whose bodies only contain includes.
+            args = copy(ex.args)
+            args[end] = _transform_expression(ctx, args[end], scope, file, line)
+            return Expr(:macrocall, args...)
         elseif name in _BASE_LITERAL_MACROS && all(arg -> arg isa String, ex.args[3:end])
             # Check the actual binding after preceding imports/definitions ran.
             # A user macro with the same spelling is not trusted. Interpolating
@@ -821,4 +895,13 @@ function instrumentation_report(config_file::AbstractString)
                 "exclusions"=>copy(ctx.exclusions), "records"=>records,
                 "observed_includes"=>[Dict("module"=>event.scope,"file"=>event.path,
                     "instrumented"=>event.instrumented) for event in ctx.observed_includes])
+end
+
+function original_source_root(mod::Module)
+    lock(_INSTRUMENTATION_LOCK) do
+        for ctx in values(_INSTRUMENTATION_CONTEXTS)
+            _owned_module(ctx, mod) && return ctx.original_root
+        end
+        return pkgdir(mod)
+    end
 end

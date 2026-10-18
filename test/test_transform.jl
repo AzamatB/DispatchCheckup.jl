@@ -12,7 +12,7 @@ function source_files(ex)
     return reduce(vcat, source_files.(ex.args); init=String[])
 end
 
-function fixture(f; unstable=String[], require_all=false, extra="")
+function fixture(f; unstable=String[], require_all=false, extra="", documented=false)
     mktempdir() do root
         original, overlay, snapshot = (joinpath(root, name) for name in ("original", "overlay", "snapshot"))
         foreach(path -> mkpath(joinpath(path,"src")), (original, overlay, snapshot))
@@ -49,6 +49,7 @@ function fixture(f; unstable=String[], require_all=false, extra="")
         $extra
         end
         """
+        documented && (source = "\"Documented fixture package.\"\n" * source)
         files = Dict("$(name).jl"=>source,
             "plain.jl"=>"plain_ok(x::Int) = x + 2\n",
             "mapped.jl"=>"\n\n\nmapped_bad(x::Bool) = x ? 1 : 1.0\n",
@@ -286,6 +287,69 @@ end
         @test _latest(mod,:custom_literal) == "custom"
         @test any(record -> occursin("opaque macro @v_str",record["reason"]), I.instrumentation_report(config)["records"])
         @test_throws r"unsupported definitions remain" I._validate_coverage_policy!(I._instrumentation_context(config))
+    end
+end
+
+@testset "Wide argument lists retain precise checker signatures" begin
+    args = join(("x$i" for i in 1:40), ", ")
+    fixture(; extra="""
+        wide_ok($args) = x1 + x40
+        wide_bad($args) = x1 > 0 ? x1 : Float64(x40)
+        """) do mod, _, _, _
+        values = ntuple(identity, 40)
+        @test _call(mod, :wide_ok, values...) == 41
+        @test_throws I.DispatchDoctor.TypeInstabilityError _call(mod, :wide_bad, values...)
+        kinds = (Int, Type{Int}, Union{Int,Float64}, Val(:tag), nothing, 1.0)
+        @test I._specializing_types(kinds) == map(I.DispatchDoctor.specializing_typeof, kinds)
+        @test I._specializing_types(()) == ()
+    end
+end
+
+@testset "Type-valued keyword arguments preserve singleton types" begin
+    fixture(; extra="""
+        struct Workspace{T}
+            x::Vector{T}
+        end
+        Workspace(n::Int; T::Type=Float64) = Workspace(n, T)
+        Workspace(n::Int, ::Type{T}) where T = Workspace{T}(Vector{T}(undef,n))
+        keyword_bad(x::Int; T::Type=Float64) = x > 0 ? x : T(x)
+        """) do mod, _, _, _
+        constructor = _latest(mod, :Workspace)
+        @test eltype(Base.invokelatest(constructor, 2).x) === Float64
+        @test eltype(Base.invokelatest(constructor, 2; T=Float32).x) === Float32
+        @test_throws I.DispatchDoctor.TypeInstabilityError Base.invokelatest(
+            _latest(mod, :keyword_bad), 1; T=Float32)
+    end
+end
+
+@testset "Documentation retains recursive instrumentation and source provenance" begin
+    fixture(; documented=true, require_all=true,
+            extra="\"Nested docs\"\nmodule Documented\n\"Method docs\"\nbad(x::Bool) = x ? 1 : 1.0\nend") do mod, config, original, _
+        nested = _latest(mod, :Documented)
+        @test_throws I.DispatchDoctor.TypeInstabilityError _call(nested, :bad, true)
+        module_docs = Base.Docs.meta(mod)[Base.Docs.Binding(parentmodule(mod), nameof(mod))]
+        method_docs = Base.Docs.meta(nested)[Base.Docs.Binding(nested, :bad)]
+        @test any(doc -> any(text -> occursin("Documented fixture package", string(text)), doc.text), values(module_docs.docs))
+        @test any(doc -> any(text -> occursin("Method docs", string(text)), doc.text), values(method_docs.docs))
+        @test I.instrumentation_report(config)["counts"]["unsupported"] == 0
+        @test DispatchCheckup.source_root(mod) == realpath(original)
+        @test DispatchCheckup.source_root(nested) == realpath(original)
+        @test I._validate_coverage_policy!(I._instrumentation_context(config)) === nothing
+    end
+end
+
+@testset "JLL loader metadata leaves inference enabled for checks" begin
+    fixture(; extra="""
+        module Header_jll
+            using JLLWrappers
+            JLLWrappers.@generate_main_file_header("Header")
+            stable(x::Int) = x + 1
+            unstable(x::Bool) = x ? 1 : 1.0
+        end
+        """) do mod, _, _, _
+        header = _latest(mod, :Header_jll)
+        @test _call(header, :stable, 2) == 3
+        @test_throws I.DispatchDoctor.TypeInstabilityError _call(header, :unstable, true)
     end
 end
 

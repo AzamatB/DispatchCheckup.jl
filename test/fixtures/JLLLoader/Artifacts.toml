@@ -1,0 +1,4 @@
+# The loader selects an AnyPlatform wrapper, which uses no binary artifact.
+[DCFixtureLoader]
+git-tree-sha1 = "0000000000000000000000000000000000000000"
+lazy = true
