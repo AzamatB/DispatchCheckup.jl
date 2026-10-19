@@ -1,5 +1,5 @@
 using Test, TOML
-isdefined(@__MODULE__, :DispatchCheckupFixtures) || include("fixtures/support.jl")
+isdefined(@__MODULE__, :DispatchCheckupFixtures) || include("fixtures/test_support.jl")
 
 @testset "original-source test subprocesses" begin
     DispatchCheckupFixtures.with_sandbox() do sandbox

@@ -4,7 +4,7 @@ get(ENV, "DISPATCHCHECKUP_GPU_TESTS", "0") == "1" ||
     error("Native GPU qualification requires DISPATCHCHECKUP_GPU_TESTS=1 and the test/gpu environment")
 
 using CUDA
-isdefined(@__MODULE__, :DispatchCheckupFixtures) || include("fixtures/support.jl")
+isdefined(@__MODULE__, :DispatchCheckupFixtures) || include("fixtures/test_support.jl")
 const DCGPUF = DispatchCheckupFixtures
 
 const GPU_STABLE_BODY = raw"""

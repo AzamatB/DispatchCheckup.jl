@@ -1,5 +1,5 @@
 using Test, TOML
-isdefined(@__MODULE__, :DispatchCheckupFixtures) || include("fixtures/support.jl")
+isdefined(@__MODULE__, :DispatchCheckupFixtures) || include("fixtures/test_support.jl")
 const DCF = DispatchCheckupFixtures
 
 const FIXTURE_IMPORTS = raw"""
@@ -395,4 +395,4 @@ end
     end
 end
 
-include("test_original.jl")
+include("test_launcher.jl")
