@@ -773,7 +773,7 @@ The D01 phases are kept: P1 builds the shell and the seam with the walker frozen
 
 ### Dependencies and critical path
 
-- **Critical path**, single lane: P1.0 → P1.2 → P1.3 → P1.4 → P1.5 → P2.1 → P2.2 → P2.3 → P2.6 → P2.7 → P3.1 → P3.2 → P3.3 → P3.4 → M.2 → M.3 → M.4. That is about 31–43 developer-days. Only M.3's finalization (1–2 days) is on the path; drafting the consumer PRs runs in parallel.
+- **Critical path**, single lane: P1.0 → P1.2 → P1.3 → P1.4 → P1.5 → P2.1 → P2.2 → P2.3 → P2.6 → P2.7 → P3.1 → P3.2 → P3.3 → P3.4 → M.2 → M.3 → M.4. This chain, not the volume of code, bounds wall-clock time. Only M.3's finalization is on the path; drafting the consumer PRs runs in parallel.
 - **Hard edges:**
   - P1.0 → P1.3 (layout);
   - P1.2 → everything (seam);
@@ -791,15 +791,17 @@ The D01 phases are kept: P1 builds the shell and the seam with the walker frozen
 
 ### Effort
 
-| phase | days |
-|---|---|
-| P1 | 15.5–21 |
-| P2 | 12.5–18 |
-| P3 | 10–13.5 |
-| M | 6.5–10.5 |
-| **total** | **≈ 45–63 developer-days** |
+The work is executed by coding agents, so effort is estimated as agent wall-clock time. Writing the code is not the bottleneck. Two things are: the serial dependencies on the critical path, and Julia test runtime. 0.1's suite takes about 8 minutes, and a checked StaticArrays corpus run about 30.
 
-D01's 17–25 days covered the P1–P3 core code and assumed that the prototypes carry over. It excludes contract, CI, corpus, documentation and the 14-repository migration. Read it as a lower bound. The undeduplicated per-decision estimates in `decisions.json` sum to about 56–90 days.
+| phase | agent wall-clock | bounded by |
+|---|---|---|
+| P1 | 2–4 h | P1.0 depot prototype; integration test runs |
+| P2 | 3–5 h | one walker policy at a time, each landing its review repros as regression tests |
+| P3 | 3–5 h | recorder and aggregation; corpus runs |
+| M | 1–3 h | consumer test suites, run in parallel |
+| **total** | **≈ 1–2 days**, plus the owner's review | |
+
+Earlier drafts gave 17–25 and 45–63 *human developer-days*. Those figures are not a planning input for agent execution and were removed.
 
 ---
 
@@ -840,7 +842,7 @@ D01's 17–25 days covered the P1–P3 core code and assumed that the prototypes
 5. **Test-only forks. Resolved (default).** The current Aqua and CheckConcreteStructs `[sources]` fork pins stay in `[extras]` as they are (status quo). Switching to registered Aqua 0.8 and CheckConcreteStructs 0.1, which were verified to pass on an eager stub (`$AUDIT/D27-distribution-release-k3q9`), is out of scope for 0.2.
 6. **MacroTools floor. Resolved (default).** The activation-time fail-closed floor `pkgversion(MacroTools) >= 0.5.12` is adopted in addition to the DD `>= 0.4.29` floor, although it goes beyond O14's text. It matches S4's compat table. It is re-measured after the walker refactor (P2 exit criteria).
 7. **Weekly `dd-floor` leg. Resolved (default).** It is not in the owner's list; the recommended weekly leg with DD pinned to `=0.4.29` is adopted (D36).
-8. **Effort (open for the owner).** The bottom-up estimate of 45–63 developer-days exceeds D01's 17–25-day figure, which covers the P1–P3 core code only. The owner should accept the bottom-up estimate or decide to cut scope. No owner decision is a candidate; the corpus breadth and the Windows `@test_broken` burn-down are.
+8. **Effort. Resolved.** Estimated as agent wall-clock time, about 1–2 days plus the owner's review (see Effort). If time must be cut, the candidates are the corpus breadth and the Windows `@test_broken` burn-down, not any owner decision.
 9. **Repro archive gap.** `julia-forward-compat-2074` (#99–#102, #108, #109) is not archived.
 10. **Merge style. Resolved (default).** The redesign merges to `main` with a merge commit, not a squash (D27).
 11. **Unsupported operating systems. Resolved (default).** Activation fails closed on any OS other than Linux, macOS and Windows, as the D25 challenger proposed (F-17).

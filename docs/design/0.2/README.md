@@ -51,8 +51,8 @@ maintainer's local review archive, which is not part of this repository.
 1. **Consumer rollout** (S1 open point 12, S5 D27): the rollout path for the consumer
    integration PRs that are still open, and whether a consumer that cannot migrate on merge day
    may temporarily pin `rev = "v0.1.2"`.
-2. **Effort** (S1 open point 13, S5 open point 8): the bottom-up estimate is 45–63
-   developer-days; the 17–25 figure covers only the core code. Accept, or name scope cuts.
+
+Effort is estimated at about 1–2 days of agent wall-clock time plus review (S5 Effort).
 
 One technical point is settled by prototype rather than by the owner: whether the private
 depot must mirror `dev/` and `packages/` for depot relocation (S2 D17+D47, the first Phase 1
