@@ -1,43 +1,31 @@
 # DispatchCheckup.jl
 
-Dispatch the doctor on call. Run [DispatchDoctor](https://github.com/MilesCranmer/DispatchDoctor.jl)
-against a package during testing, without adding annotations to its production source.
+Run your package's tests as if [DispatchDoctor](https://github.com/MilesCranmer/DispatchDoctor.jl)'s
+`@stable` were applied to the whole package, without changing its source code. Production
+code, and test runs without DispatchCheckup, stay exactly as they are.
+
+## Usage
+
+Put two lines at the top of `test/runtests.jl`, before the package is loaded:
 
 ```julia
 import DispatchCheckup
+DispatchCheckup.dispatch_doctor(:MyPackage; unstable = (:foo, :bar))
 
-DispatchCheckup.dispatch_doctor(:MyPackage; unstable=(:foo, :bar))
-
-using Test
-using MyPackage
-
-# Existing tests
+using Test, MyPackage
+# ... the existing tests
 ```
 
-Put the activation call before importing the package under test. The names in
-`unstable` identify `MyPackage.foo` and `MyPackage.bar`; their methods are excluded
-from the inserted checks. An exclusion that matches no definition is an error.
-Use a qualified symbol such as `Symbol("MyPackage.Nested.foo")` to exclude a
-nested function without excluding the root module's `foo`.
+Every function of `MyPackage` (its module, submodules, included files and extensions) is
+then checked: a call whose return type is not concrete throws DispatchDoctor's
+`TypeInstabilityError` (that of the fork below), and the test that made the call fails.
+Comment out the two lines and the run is an ordinary one, as if DispatchCheckup did not
+exist.
 
-For nonstandard drivers, `entrypoint="path/to/runtests.jl"` selects the test file
-explicitly. `report="checkup.toml"` retains the coverage report after temporary
-files are cleaned up. `require_all=true` turns recognized unsupported constructs
-into errors; the default reports DispatchDoctor's documented skips visibly.
+## Installation
 
-Comment out **only the activation line** to run ordinary tests. Importing
-DispatchCheckup does not load DispatchDoctor, install loader hooks, change
-preferences, or create an instrumented environment.
-
-Install DispatchCheckup as a test dependency from its GitHub `main` branch:
-
-```julia
-using Pkg
-Pkg.add(url="https://github.com/AzamatB/DispatchCheckup.jl", rev="main")
-```
-
-For a package using `test/Project.toml`, run this in the activated test project.
-Keep the source declaration alongside the dependency:
+Add DispatchCheckup as a test dependency, with a `[sources]` entry and a `[compat]` entry
+for it. In `test/Project.toml`:
 
 ```toml
 [deps]
@@ -45,125 +33,170 @@ DispatchCheckup = "ca055ede-32eb-4961-937e-82d9c5ec6430"
 
 [sources]
 DispatchCheckup = {url = "https://github.com/AzamatB/DispatchCheckup.jl", rev = "main"}
+
+[compat]
+DispatchCheckup = "0.2"
 ```
 
-For an extras/targets test environment, put the UUID in `[extras]`, include
-`"DispatchCheckup"` in `[targets].test`, and use the same `[sources]` entry.
-DispatchCheckup targets Julia 1.13 and depends on DispatchDoctor 0.4.29 or a
-compatible release.
+With `[extras]` and `[targets]` in the package's `Project.toml`, put the UUID in
+`[extras]`, add `"DispatchCheckup"` to `[targets].test` and use the same `[sources]` and
+`[compat]` entries (Aqua's compat check wants the latter). Julia 1.13 is required. A
+project that used DispatchCheckup 0.1 runs `Pkg.update("DispatchCheckup")` after changing
+the compat entry; if Pkg still reports an empty intersection with 0.1.2, remove the old
+record (`Pkg.rm("DispatchCheckup")`) and add it again.
 
-An activated run prepares a temporary package environment and starts a fresh
-Julia test process. Julia still loads the target as a package with its original
-UUID, so dependencies share its module and types. Instrumentation applies to
-owned source, included files, nested modules, and loaded package extensions. The
-temporary dependency graph supplies the checking tools; production metadata is
-not rewritten. Large assets can be shared without copying an entire dataset.
+DispatchCheckup needs a [fork of DispatchDoctor](https://github.com/AzamatB/DispatchDoctor.jl/tree/dispatchcheckup-v2)
+(see [the design notes](docs/design.md)). Its own `[sources]` names the fork, and Pkg picks
+it up from there. The fork has its own UUID, so it is a separate package that only
+DispatchCheckup loads: with the registered DispatchDoctor's UUID, it would replace that
+package in any environment that also has DispatchCheckup, even with the two lines commented
+out. If your package, its dependencies or its tests use the registered DispatchDoctor, they
+keep using it, in ordinary and in checked runs. In a checked run, the registered
+`DispatchDoctor.allow_unstable` also pauses the checks, so tests that use it work unchanged.
+The fork captures the registered package's flag once, when it loads, and the checks read
+it without a lock or a lookup, so threads that run checked code inside one
+`allow_unstable` (a `Threads.@threads` loop, say) are all paused. The errors that the
+checks throw are the fork's `DispatchCheckup.DispatchDoctor.TypeInstabilityError`, which
+the registered `DispatchDoctor.TypeInstabilityError` does not match (in `@test_throws`,
+say).
 
-The parent forwards the child's result and does not execute the suite a second
-time. It reruns the test entrypoint from the beginning, so put activation near
-the top, before test setup with side effects. The child preserves test arguments
-and execution settings. Temporary preferences enable checking even when the
-original environment disables it;
-the original preferences remain unchanged. Instrumented package loading uses
-isolated writable state and verifies that the intended source is loaded.
-Tests that inspect original source files can call `DispatchCheckup.source_root(MyPackage)`;
-it returns the original checkout during instrumentation and `pkgdir(MyPackage)`
-otherwise, without activating checks.
-
-DispatchDoctor checks inferred **return types for the signatures exercised by
-the tests**. A function can return a concrete type while still doing dynamic
-work internally. Keep JET, concrete-field, boxed-capture, allocation, and device
-checks alongside this tool. Also retain an ordinary test run for production
-performance measurements: instrumentation can change compilation and allocation
-behavior.
-
-The temporary instrumentation uses DispatchDoctor's `debug` code generation,
-which retains the original function body alongside its inference simulator.
-This preserves inference through parametric keyword constructors; the smaller
-`min` wrapper can introduce boxed simulator captures in those constructors.
-
-JET and allocation or source guards should inspect production code, rather than
-the checker's reflective wrappers. Delegate those test files through the same
-test entrypoint:
+## Options
 
 ```julia
-DispatchCheckup.test_original(test_args=["test_guards.jl"]) ||
-    include("test_guards.jl")
+dispatch_doctor(pkg::Symbol; unstable = (), original = (), mode = "error", union_limit = 1)
 ```
 
-The driver must accept the supplied selector and run its usual fixture setup.
-For an environment-based selector, use
-`DispatchCheckup.test_original(env=["MY_TEST_GROUP" => "guards"])`.
-The helper starts a fresh process with the original resolved project, load path,
-depot, package source, and execution flags; it does not resolve dependencies.
-Only that authenticated ordinary controller bypasses the recursive activation
-call. A nonzero child exit fails the checked run with the same exit status.
-Controller and project/load-path/depot variables cannot be overridden through
-`env`. The checked target is loaded before delegation if the driver has not
-imported it yet.
+`unstable` lists definitions not to check, as DispatchDoctor's `@unstable` would. An entry
+is one of:
 
-When activation is commented out, `test_original` returns `false` without
-loading DispatchDoctor or starting a subprocess, so the existing include runs
-normally. It also returns `false` inside the ordinary child, preventing
-recursion. The report records these runs under `original_tests`, with their
-selectors, source/environment identity, exit status, and validation result.
-These records establish ordinary-source test results, not additional
-DispatchDoctor-exercised signatures.
+| Entry | Excludes |
+| --- | --- |
+| `:foo` | every definition named `foo`, in any module of the package or its extensions |
+| `Symbol("MyPackage.Sub.foo")` | the definitions of `foo` in that module (or an extension module such as `Symbol("MyPackageDatesExt.foo")`), and those written as `MyPackage.Sub.foo(...)` |
+| `Symbol("Base.getindex")` | the definitions written as `Base.getindex(...)` (operators as DispatchDoctor prints them, `Symbol("Base.:+")`, also work) |
+| `:foo => "src/file.jl:42"` | the definition of `foo` that starts at that line (the path is relative to the package root) |
 
-DispatchDoctor intentionally does not instrument every Julia construct.
-Recognized skips appear as diagnostics in the coverage report.
-Generated functions, some macro-generated definitions, and local closures need
-particular attention. An active-check witness, package identity checks, and
-exclusion validation prevent an apparently successful run with checking disabled.
-The report counts annotated definitions and unsupported syntax sites, not
-exercised argument signatures. A checked outer function can also have a warning
-about an unchecked local closure. An unloaded extension or an uncalled method
-has not been tested.
+Any collection of entries works; a single Symbol or Pair is one entry. A definition behind
+macros (`@generated`, `@inline`, a docstring, ...) is excluded together with them, as
+`@unstable @generated function f(x) ... end` would be. Each entry must match a definition
+in the package's sources, or the run stops before the tests start, with the nearest names
+found. To find the sources, DispatchCheckup follows the include calls whose paths are
+strings, `@__DIR__`, `dirname(@__FILE__)`, `joinpath` or string interpolation of these, or
+a loop over literal file names; it lists the others in that error.
 
-Direct `include`, `Base.include`, and `Base.include_string` calls, including their
-mapper forms, are supported. Included files must be inside the package tree.
-Snapshots copy `.jl` and `.toml` files; other files are shared assets and cannot
-be included as Julia source. Custom `include` bindings and detected loader
-bypasses fail with a diagnostic. Arbitrary
-reflection, dynamically generated code, and definitions created in separate
-worker processes are not exhaustively covered. `require_all=true` rejects
-recognized gaps in loaded source; it is not a proof of complete runtime coverage.
-JLLWrappers platform-loader macros map their selected source includes too. The
-private JLL test overlay enables inference for those checks; third-party
-generated loader helpers remain explicitly reported coverage gaps.
+`mode` and `union_limit` are DispatchDoctor's `default_mode` (`"error"`, or `"warn"` to only
+log instabilities) and `default_union_limit` (`2` accepts `Union{Float32, Float64}`, say).
+DispatchCheckup sets them as the package's preferences for the run, so that a
+`dispatch_doctor_mode = "disable"` preference cannot switch the checks off.
 
-CUDA kernels with stable checked calls can compile successfully. A checked
-device function with an unstable return may instead fail GPU compilation when
-DispatchDoctor's host-side error path is retained. This is not a device-native
-replacement for CUDA inference diagnostics. Use explicit exclusions where
-appropriate, and qualify GPU behavior with actual device tests.
-The checker preserves argument-type tuples for kernels with many arguments.
-CUDA device overrides and other method-table overlays are retained as explicit
-coverage gaps: DispatchDoctor's host inference cannot safely check their separate
-method tables. Ordinary kernels and the corresponding host methods remain checked.
+`original` lists test files that must see the ordinary package, such as JET or
+allocation checks. They run after the suite, in one fresh Julia process with the original
+environment and package, and their failures fail the run. Skip them in the checked suite:
 
-The temporary environment is a testing mechanism, not an operating-system
-sandbox. Package and test code retain their ordinary filesystem permissions.
-DispatchCheckup does not rewrite the original package sources; it cannot prevent
-arbitrary tested code from writing to paths that code explicitly opens.
+```julia
+DispatchCheckup.dispatch_doctor(:MyPackage; original = "test_guards.jl")
+using Test, MyPackage
+# ...
+get(ENV, "DISPATCH_CHECKUP", "") == "checked" || include("test_guards.jl")
+```
 
-Develop and verify this package with:
+The guard files run after every checked run, so a suite that runs subsets should build the
+`original=` list from its own selection (for example,
+`original = "test_guards.jl" in selected ? ("test_guards.jl",) : ()`). The paths are
+relative to the file that calls `dispatch_doctor`. `DISPATCH_CHECKUP` is `"checked"`
+during a checked run, and in the Julia processes it starts: those load the checked package
+too. A process that calls `dispatch_doctor` itself (a test that runs `runtests.jl` again,
+say) is checked with its own options instead.
+
+## In CI
+
+Keep the ordinary test job, and add a job that turns the checks on with an environment
+variable:
+
+```julia
+if !isempty(get(ENV, "DISPATCH_CHECKUP", ""))
+    import DispatchCheckup
+    DispatchCheckup.dispatch_doctor(:MyPackage; unstable = (:foo,))
+end
+```
+
+```yaml
+  checkup:
+    runs-on: ubuntu-latest
+    env:
+      DISPATCH_CHECKUP: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1.13"
+      - uses: julia-actions/julia-runtest@v1
+```
+
+## What is checked
+
+Exactly what DispatchDoctor checks when its `@stable` wraps a module: every function
+definition at the top level of the package's code, with DispatchDoctor's own rules (for
+example, it leaves out closures, generated functions, functions with `@nospecialize`
+arguments and code inside `@eval` or quotes). Files included with `include(path)`,
+`Base.include(mod, path)`, `Core.include(mod, path)`, `Mod.include(path)` and their mapper
+forms are checked too.
+Not checked: code loaded with `include_string`, higher-order uses of `include` such as
+`foreach(include, files)` or `include.(files)`, and include calls that a macro generates
+(such as JLLWrappers' wrapper files). Modules that turn inference off
+(`Base.Experimental.@compiler_options infer=false`, as every JLL package does) are not
+checked either, so a checked run of a JLL package checks almost nothing. The checks see
+only the calls that the tests make. A definition that `@stable` cannot take makes the
+package (or the extension) fail to load in the checked run; exclude it with `unstable=`.
+Examples are `Base.@ccallable` and `CUDA.@device_override f(x) = ...`: DispatchDoctor
+applies the macro to its inferred copy of `f` too (exclude it as `:f => "src/file.jl:LINE"`,
+which keeps any other method of `f` checked). If the package itself uses DispatchDoctor,
+its `@stable` and `@unstable` blocks are left to the registered DispatchDoctor. Its
+`allow_unstable` pauses the checks too, but its `register_macro!` does not reach them: use
+`DispatchCheckup.DispatchDoctor.register_macro!` in a checked run.
+
+The DispatchDoctor fork fixes a few false positives and other problems of DispatchDoctor
+0.4.29, with the changes proposed upstream in PRs
+[#131](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/131)–[#136](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/136):
+calls with many arguments, types passed by keyword, `@__DIR__` and `@__FILE__` inside
+checked functions, `baremodule`s, modules with inference turned off, and `Type{K}`
+arguments where `K` is itself a type of types.
+
+A checked run also fails, with a message, when:
+
+1. the package or one of its extensions was not loaded from DispatchCheckup's overlay (for
+   instance because it was loaded before `dispatch_doctor`, or from another environment),
+   the package never loaded at all, or an extension whose packages were loaded did not load;
+2. DispatchDoctor would not use the requested `mode` and `union_limit` for the package;
+3. an `unstable` entry matches nothing.
+
+## How it works
+
+`dispatch_doctor` writes a small overlay for the package: a copy of its `Project.toml` and
+one short file per entry point that loads the original source files, in place, with
+DispatchDoctor applied to each top-level expression. A temporary environment, put first on
+the load path, makes `using MyPackage` load the package from the overlay; the active
+project stays the same. The checked package is precompiled as usual, and the image is
+reused while the sources and the options stay the same. There is one overlay per checkout
+and set of options, so concurrent runs with other options do not affect each other.
+`pkgdir` and `pathof` report the original checkout, also in the package's `__init__` and in
+Julia processes started by the tests. Checked errors are
+`DispatchCheckup.DispatchDoctor.TypeInstabilityError`. See [docs/design.md](docs/design.md).
+
+For `pkgdir` in `__init__`, the checked package and each extension get one hidden
+submodule, `var"#DispatchCheckup"`. Tools that match a package's submodules with its source
+report it: ExplicitImports' `check_no_implicit_imports` and `check_no_stale_explicit_imports`
+throw an `UnanalyzableModuleException`. Run such checks as `original=` files.
+
+## Development
 
 ```sh
-julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test()'
+julia --startup-file=no --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-The test fixtures declare the GitHub `main` source. Tests of an unpublished
-checkout use Julia's ordinary temporary test resolver to select that checkout;
-local sibling paths are not committed as dependency sources.
-
-The optional CUDA suite has its own environment, also sourced from GitHub
-`main`. Once that branch contains the implementation, run it with:
+The CUDA tests have their own environment and need a GPU:
 
 ```sh
 julia --project=test/gpu -e 'using Pkg; Pkg.instantiate()'
 DISPATCHCHECKUP_GPU_TESTS=1 julia --project=test/gpu test/runtests.jl test_gpu.jl
 ```
-
-Set `CUDA_VISIBLE_DEVICES` to select a GPU for an independent run. The CPU suite
-does not require CUDA.

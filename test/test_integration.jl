@@ -1,398 +1,528 @@
-using Test, TOML
-isdefined(@__MODULE__, :DispatchCheckupFixtures) || include("fixtures/test_support.jl")
-const DCF = DispatchCheckupFixtures
+# Checked runs of generated fixture packages, each in a fresh Julia process.
+using Test
+isdefined(@__MODULE__, :Fixtures) || include("support.jl")
+using .Fixtures: Fixtures, UUIDS, CHECKUP, USES_DOCTOR, write_files, package_project, julia, resolve
 
-const FIXTURE_IMPORTS = raw"""
-using Test, DCFixtureTarget, DCFixtureDependency, DCFixtureConsumer, Dates
-const Target = DCFixtureTarget
-const extension = Base.get_extension(Target, :DCFixtureTargetDatesExt)
-@test extension !== nothing
-@test string(Base.PkgId(Target).uuid) == "eadb23ac-f16a-4969-a7d5-a895e9f8275b"
-@test Target.Token === DCFixtureDependency.Token
-@test DCFixtureConsumer.DCFixtureTarget === Target
-@test DCFixtureConsumer.token_type() === Target.Token
-@test DCFixtureConsumer.make_token(7) isa DCFixtureDependency.Token
-@test Target.token(7).value == 7
-@test Target.stable(1) === 2
-@test Target.Nested.stable(1) === 3
-@test Target.BareNested.stable(1) === 4
-@test Target.extension_value(Date(2025, 1, 2)) == 2025
-@test Target.mapped_file_loaded
-@test length(Target.map_hits) >= 3
-@test DCFixtureDependency.dependency_unstable(1) === 1
-println("DCT_TARGET_PATH=", pkgdir(Target))
-function expect_unstable(f, args...)
-    result = try
-        f(args...)
-    catch exception
-        exception
-    end
-    @test nameof(typeof(result)) === :TypeInstabilityError
-end
-"""
+const WIDE = "wide(" * join(("x$i" for i in 1:36), ", ") * ") = x1 + x36"
 
-const ALL_UNSTABLE_METHODS = raw"""
-(Target.root_unstable, Target.static_unstable, Target.bare_unstable, Target.mapped_unstable,
- Target.qualified_unstable, Target.base_mapped_unstable,
- Target.dynamic_unstable, Target.string_unstable, Target.mapped_string_unstable,
- Target.Nested.foo, Target.Nested.nested_unstable, Target.Nested.nested_include_unstable,
- Target.BareNested.baremodule_unstable,
- extension.ext_unstable, extension.Nested.nested_ext_unstable)
-"""
+const FIXTURE = Dict(
+    "src/DCFixture.jl" => """
+        module DCFixture
 
-function check_success(result)
-    result.code == 0 || @error "fixture failed" log=result.log output=result.output
-    @test result.code == 0
-    @test result.originals_unchanged
-    @test count(==("DCT_BODY_COMPLETE"), split(result.output, '\n')) == 1
-end
+        export stable
+        struct Wrapper end
+        struct Other end
 
-function check_cleaned_overlay(result, sandbox)
-    projects = DCF.printed_paths(result, "DCT_ACTIVE_PROJECT")
-    @test length(projects) == 1
-    for project in projects
-        @test project != joinpath(sandbox.environment, "Project.toml")
-        @test project != joinpath(sandbox.target, "Project.toml")
-        @test !ispath(dirname(project))
-    end
-    for target in DCF.printed_paths(result, "DCT_TARGET_PATH")
-        @test target != sandbox.target
-        @test !ispath(target)
-    end
-end
-
-@testset "DispatchCheckup package-loader integration" begin
-    DCF.with_sandbox() do sandbox
-        @testset "JLLWrappers platform includes stay instrumented" begin
-            result = DCF.run_script(sandbox, "jll-loader", raw"""
-                using Test, DCFixtureLoader_jll
-                @test DCFixtureLoader_jll.stable(2) == 3
-                failure = try DCFixtureLoader_jll.unstable(true) catch exception; exception end
-                @test nameof(typeof(failure)) === :TypeInstabilityError
-                @test DispatchCheckup.source_root(DCFixtureLoader_jll) != pkgdir(DCFixtureLoader_jll)
-                """; target=:DCFixtureLoader_jll)
-            check_success(result)
-            check_cleaned_overlay(result, sandbox)
+        stable(x) = x + 1
+        unstable(x) = x > 0 ? x : 0.0
+        twin(x) = x > 0 ? x : 0.0
+        lined(x) = x > 0 ? x : 0.0
+        lined(x, y) = x > 0 ? y : 0.0
+        "Docs of documented."
+        documented(x) = x > 0 ? x : 0.0
+        @generated generated(x) = :(x)
+        generated(x, y) = x > 0 ? x : 0.0
+        Base.getindex(::Wrapper, i) = i > 0 ? i : 0.0
+        where_dir() = @__DIR__
+        $WIDE
+        typed_kw(x; T = Float64) = T(x)
+        const INIT_DIR = Ref("")
+        __init__() = (INIT_DIR[] = something(pkgdir(@__MODULE__), ""); nothing)
+        include("included.jl")
+        include(identity, "mapped.jl")
+        Base.include(@__MODULE__, "based.jl")
+        Core.include(@__MODULE__, joinpath(@__DIR__, "cored.jl"))
+        for file in ("looped.jl",)
+            include(file)
         end
-        ordinary_body = FIXTURE_IMPORTS * """
-            @test !fixture_loaded("DispatchDoctor")
-            @test Base.active_project() == fixture_original_project
-            @test LOAD_PATH == fixture_original_load_path
-            @test DEPOT_PATH == fixture_original_depot_path
-            @test Dict(ENV) == fixture_original_environment
-            for f in $ALL_UNSTABLE_METHODS
-                @test f(1) === 1
+
+        module Sub
+        import Base: getindex
+        using ..DCFixture: Other
+        unstable(x) = x > 0 ? x : 0.0
+        twin(x) = x > 0 ? x : 0.0
+        getindex(::Other, i) = i > 0 ? i : 0.0
+        include("sub_included.jl")
+        module Deeper
+        deep_unstable(x) = x > 0 ? x : 0.0
+        end
+        end
+
+        Sub.include("sub_more.jl")
+
+        module NoInfer
+        Base.Experimental.@compiler_options infer=false
+        noinfer(x) = x > 0 ? x : 0
+        end
+
+        end
+        """,
+    "src/included.jl" => """
+        included_unstable(x) = x > 0 ? x : 0.0
+        include(joinpath("deeper", "more.jl"))
+        """,
+    "src/deeper/more.jl" => "more_unstable(x) = x > 0 ? x : 0.0\n",
+    "src/mapped.jl" => "mapped_unstable(x) = x > 0 ? x : 0.0\n",
+    "src/based.jl" => "based_unstable(x) = x > 0 ? x : 0.0\n",
+    "src/cored.jl" => "cored_unstable(x) = x > 0 ? x : 0.0\n",
+    "src/sub_included.jl" => "sub_included_unstable(x) = x > 0 ? x : 0.0\n",
+    "src/looped.jl" => "looped_unstable(x) = x > 0 ? x : 0.0\n",
+    "src/sub_more.jl" => "sub_more_unstable(x) = x > 0 ? x : 0.0\n",
+    "ext/DCFixtureDatesExt.jl" => """
+        module DCFixtureDatesExt
+        using DCFixture, Dates
+        ext_unstable(x) = x > 0 ? x : 0.0
+        ext_other(x) = x > 0 ? x : 0.0
+        end
+        """,
+    "ext/DCFixtureUnicodeExt.jl" => """
+        module DCFixtureUnicodeExt
+        using DCFixture, Unicode
+        # DispatchDoctor applies @ccallable to its inferred copy too, which cannot work.
+        Base.@ccallable ccallable(x::Int)::Int = x
+        end
+        """,
+    "Project.toml" => package_project("DCFixture";
+        weakdeps = Dict("Dates" => UUIDS["Dates"], "Unicode" => UUIDS["Unicode"]),
+        extensions = Dict("DCFixtureDatesExt" => "Dates", "DCFixtureUnicodeExt" => "Unicode")),
+)
+line_of(code) = findfirst(==(code), split(FIXTURE["src/DCFixture.jl"], '\n'))
+const LINED, DOCUMENTED = line_of("lined(x) = x > 0 ? x : 0.0"), line_of("documented(x) = x > 0 ? x : 0.0")
+
+const BARE = Dict(
+    "src/DCBare.jl" => """
+        baremodule DCBare
+        using Base: >, +
+        bare_stable(x) = x + 1
+        two_way(x) = x > 0 ? x : 0.0
+        bare_unstable(x) = x > 0 ? x : x > -1 ? 0.0 : 0.0f0
+        end
+        """,
+    "Project.toml" => package_project("DCBare"),
+)
+
+const GUARDS = Dict(
+    "guard_ok.jl" => """
+        using Test, DCFixture
+        @test DCFixture.unstable(1) == 1
+        @test !any(id -> id.name == "DispatchDoctor", keys(Base.loaded_modules))
+        @test !any(startswith("DISPATCH_CHECKUP"), keys(ENV))
+        @test pwd() == @__DIR__
+        println("DCT_GUARD_OK ", getpid())
+        """,
+    "guard_fail.jl" => """
+        using Test
+        @test 1 == 2
+        println("DCT_GUARD_FAIL_RAN")
+        """,
+    # Julia processes started by a checked run: plainly, and calling dispatch_doctor again.
+    "child_plain.jl" => """
+        using DCFixture
+        checked = try DCFixture.unstable(1); false catch; true end
+        println("DCT_CHILD_PLAIN ", checked, " ", pkgdir(DCFixture) == DCFixture.INIT_DIR[] == ENV["DCT_ROOT"])
+        """,
+    "child_own.jl" => """
+        import DispatchCheckup
+        DispatchCheckup.dispatch_doctor(:DCFixture; unstable = :unstable)
+        using DCFixture
+        println("DCT_CHILD_OWN ", DCFixture.unstable(1), " ", pkgdir(DCFixture) == ENV["DCT_ROOT"])
+        """,
+)
+
+# The two lines (commented out unless `activate`), then `body`.
+function script(body; pkg = :DCFixture, activate = true, options = "", prelude = "")
+    lines = ["import DispatchCheckup",
+             "DispatchCheckup.dispatch_doctor($(repr(pkg))$(isempty(options) ? "" : "; $options"))"]
+    activate || (lines = "# " .* lines)
+    return prelude * join(lines, '\n') * """
+
+        using Test, $pkg
+        detected(f, args...; kws...) = try
+            f(args...; kws...)
+            false
+        catch e
+            nameof(typeof(e)) === :TypeInstabilityError || rethrow()
+            true
+        end
+        loaded(name) = any(id -> id.name == name, keys(Base.loaded_modules))
+        """ * body
+end
+
+function run_script(env, name, text)
+    file = joinpath(env, "$name.jl")
+    write(file, text)
+    return julia("--project=$env", file; dir = env, env = Dict("DCT_ROOT" => root(env, "DCFixture")))
+end
+root(env, pkg) = joinpath(dirname(env), pkg)
+markers(output, key) = [line for line in split(output, '\n') if startswith(line, key)]
+
+function show_failure(result)
+    result.code == 0 || println(result.output)
+    return result
+end
+
+mktempdir() do sandbox
+    write_files(joinpath(sandbox, "DCFixture"), FIXTURE)
+    write_files(joinpath(sandbox, "DCBare"), BARE)
+    write_files(joinpath(sandbox, "DCUsesDoctor"), USES_DOCTOR)
+    before = Fixtures.snapshot(sandbox)
+    env, plain = joinpath(sandbox, "env"), joinpath(sandbox, "plain")
+    deps = Dict(name => UUIDS[name] for name in ("DCFixture", "DCBare", "DCUsesDoctor", "DispatchCheckup",
+                                                 "Test", "Dates", "Unicode"))
+    sources = Dict(name => Dict("path" => "../$name") for name in ("DCFixture", "DCBare", "DCUsesDoctor"))
+    sources["DispatchCheckup"] = Dict("path" => CHECKUP)
+    # A user preference that would switch DispatchDoctor off (check 2 must override it).
+    preferences = Dict(p => Dict("dispatch_doctor_mode" => "disable") for p in ("DCFixture", "DCBare"))
+    write_files(env, merge(GUARDS, Dict("Project.toml" => Dict("deps" => deps, "sources" => sources),
+                                        "LocalPreferences.toml" => preferences)))
+    delete!(deps, "DispatchCheckup"), delete!(sources, "DispatchCheckup")
+    write_files(plain, Dict("Project.toml" => Dict("deps" => deps, "sources" => sources),
+                            "LocalPreferences.toml" => preferences))
+    resolve(env), resolve(plain)
+    fixture_root = root(env, "DCFixture")
+
+    @testset "checked run" begin
+        result = show_failure(run_script(env, "checked", script("""
+            using Dates, DCUsesDoctor
+            @testset "checked" begin
+                @test ENV["DISPATCH_CHECKUP"] == "checked"
+                @test loaded("DispatchDoctor")
+                # the environment's "disable" preference is overridden for this run
+                @test occursin("disable", read(joinpath(dirname(Base.active_project()), "LocalPreferences.toml"), String))
+                @test Base.get_preferences(Base.PkgId(DCFixture).uuid)["dispatch_doctor_mode"] == "error"
+                @test DCFixture.stable(1) == 2
+                for f in (DCFixture.unstable, DCFixture.twin, DCFixture.included_unstable,
+                          DCFixture.more_unstable, DCFixture.mapped_unstable, DCFixture.based_unstable,
+                          DCFixture.cored_unstable,
+                          DCFixture.Sub.unstable, DCFixture.Sub.twin, DCFixture.Sub.sub_included_unstable,
+                          DCFixture.Sub.Deeper.deep_unstable)
+                    @test detected(f, 1)
+                end
+                @test detected(getindex, DCFixture.Wrapper(), 1)
+                @test detected(getindex, DCFixture.Other(), 1)
+                @test detected(DCFixture.lined, 1) && detected(DCFixture.lined, 1, 2)
+                @test detected(DCFixture.generated, 1, 2) && DCFixture.generated(1) == 1
+                # `for f in (...) include(f) end` and `Sub.include(...)` are checked too
+                @test detected(DCFixture.looped_unstable, 1) && detected(DCFixture.Sub.sub_more_unstable, 1)
+                ext = Base.get_extension(DCFixture, :DCFixtureDatesExt)
+                @test detected(ext.ext_unstable, 1)
+                # pkgdir, pathof and @__DIR__ are those of the original checkout
+                @test pkgdir(DCFixture) == ENV["DCT_ROOT"]
+                @test pathof(DCFixture) == joinpath(ENV["DCT_ROOT"], "src", "DCFixture.jl")
+                @test pathof(ext) == joinpath(ENV["DCT_ROOT"], "ext", "DCFixtureDatesExt.jl")
+                @test DCFixture.where_dir() == joinpath(ENV["DCT_ROOT"], "src")
+                @test DCFixture.INIT_DIR[] == ENV["DCT_ROOT"]  # (in __init__, from the image)
+                @test isdefined(DCFixture, Symbol("#DispatchCheckup"))  # (the module doing that)
+                # other packages keep the registered DispatchDoctor (and its false positive)
+                @test pathof(DCUsesDoctor.DispatchDoctor) != pathof(DispatchCheckup.DispatchDoctor)
+                @test detected(DCUsesDoctor.typed_kw, 1; T = Float32)
+                # Julia processes started here are checked too, or with their own options
+                child(file) = read(`\$(Base.julia_cmd()) --project=\$(Base.active_project()) \$file`, String)
+                @test occursin("DCT_CHILD_PLAIN true true", child("child_plain.jl"))
+                @test occursin("DCT_CHILD_OWN 1 true", child("child_own.jl"))
+                @test detected(DCFixture.unstable, 1)
+                # the fixes of the DispatchDoctor fork: wide calls, Type keywords, infer=false
+                args = ntuple(Float64, Val(36))
+                allocations(args) = @allocated DCFixture.wide(args...)
+                @test DCFixture.wide(args...) == 37.0
+                @test allocations(args) == 0
+                @test DCFixture.typed_kw(1; T = Float32) === 1.0f0
+                @test DCFixture.NoInfer.noinfer(1) == 1
+                # the same call again does nothing; other options are an error
+                @test DispatchCheckup.dispatch_doctor(:DCFixture) === nothing
+                @test_throws ErrorException DispatchCheckup.dispatch_doctor(:DCFixture; mode = "warn")
             end
-            @test Target.foo(1) === 1 && Target.bar(1) === 1
-            @test Target.foo(Int32(1)) === Int32(1)
-            @test isempty(PROGRAM_FILE)
+            """)))
+        @test result.code == 0
+        @test !occursin("found no compatible functions", result.output)
+    end
+
+    @testset "the package is the active project" begin
+        file = joinpath(env, "active.jl")
+        write(file, script("""
+            @test detected(DCFixture.unstable, 1) && stable(1) == 2
+            @test pkgdir(DCFixture) == ENV["DCT_ROOT"]
+            """))
+        separator = Sys.iswindows() ? ";" : ":"
+        result = show_failure(julia("--project=$fixture_root", file; dir = env, env = Dict(
+            "DCT_ROOT" => fixture_root, "JULIA_LOAD_PATH" => join(["@", env, "@stdlib"], separator))))
+        @test result.code == 0
+    end
+
+    @testset "baremodule target with union_limit" begin
+        result = show_failure(run_script(env, "bare", script("""
+            @testset "bare" begin
+                @test DCBare.bare_stable(1) == 2
+                @test !detected(DCBare.two_way, 1)
+                @test detected(DCBare.bare_unstable, 1)
+            end
+            """; pkg = :DCBare, options = "union_limit = 2")))
+        @test result.code == 0
+    end
+
+    @testset "a package that uses the registered DispatchDoctor itself" begin
+        result = show_failure(run_script(env, "uses_doctor", script("""
+            @testset "uses doctor" begin
+                # its own @stable blocks are left to the registered DispatchDoctor
+                registered, fork = DCUsesDoctor.DispatchDoctor, DispatchCheckup.DispatchDoctor
+                @test_throws registered.TypeInstabilityError DCUsesDoctor.typed_kw(1; T = Float32)
+                @test_throws fork.TypeInstabilityError DCUsesDoctor.plain_unstable(1)
+            end
+            """; pkg = :DCUsesDoctor)))
+        @test result.code == 0
+    end
+
+    @testset "commented out: as if DispatchCheckup did not exist" begin
+        body = """
+            using DCUsesDoctor
+            println("DCT_PATHOF=", pathof(DCFixture))
+            println("DCT_USES_DOCTOR=", pathof(DCUsesDoctor.DispatchDoctor), " ",
+                    detected(DCUsesDoctor.typed_kw, 1; T = Float32))
+            println("DCT_VALUES=", DCFixture.unstable(1), " ", DCFixture.Sub.twin(-1))
+            println("DCT_FORK=", any(id -> string(id.uuid) == "$(UUIDS["DispatchDoctor"])",
+                                     keys(Base.loaded_modules)))
+            println("DCT_ENV=", sort!(filter(startswith("DISPATCH_CHECKUP"), collect(keys(ENV)))))
+            println("DCT_LOAD_PATH=", LOAD_PATH)
+            println("DCT_MODULES=", sort!([id.name for id in keys(Base.loaded_modules)]))
             """
+        off = show_failure(run_script(env, "off", script(body; activate = false)))
+        absent = show_failure(run_script(plain, "absent", script(body; activate = false)))
+        @test off.code == absent.code == 0
+        @test markers(off.output, "DCT_") == markers(absent.output, "DCT_")
+        @test "DCT_VALUES=1 0.0" in markers(off.output, "DCT_VALUES")
+        @test "DCT_FORK=false" in markers(off.output, "DCT_FORK")
+        @test endswith(only(markers(off.output, "DCT_USES_DOCTOR")), " true")  # (registered)
+        @test "DCT_PATHOF=$(joinpath(fixture_root, "src", "DCFixture.jl"))" in markers(off.output, "DCT_PATHOF")
+    end
 
-        @testset "commented activation is ordinary Pkg.test" begin
-            # First run creates the ordinary target cache; the second must reuse
-            # that cache without any instrumentation or preference writes.
-            first = DCF.run_pkg_test(sandbox, "ordinary-warm", ordinary_body; active=false)
-            check_success(first)
-            @test occursin("DCT_EMPTY_PROGRAM_FILE_ENTRY", first.output)
-            before_cache = DCF.target_cache_fingerprints()
-            @test !isempty(before_cache)
-            second = DCF.run_pkg_test(sandbox, "ordinary-repeat", ordinary_body; active=false)
-            check_success(second)
-            @test before_cache == DCF.target_cache_fingerprints()
-        end
-
-        @testset "actual Pkg.test instruments every supported source path" begin
-            body = FIXTURE_IMPORTS * """
-                @test fixture_loaded("DispatchDoctor")
-                @test isempty(PROGRAM_FILE)
-                @test ARGS == ["alpha beta", "λ", "--sentinel"]
-                @test ENV["DCT_SENTINEL"] == "spaces and unicode λ preserved"
-                @test pwd() == ENV["DCT_EXPECTED_CWD"]
-                @test Target.foo(1) === 1 && Target.bar(1) === 1
-                @test Target.foo(Int32(1)) === Int32(1)
-                for f in $ALL_UNSTABLE_METHODS
-                    expect_unstable(f, 1)
+    @testset "unstable= forms" begin
+        options = "unstable = (:unstable, Symbol(\"DCFixture.Sub.twin\"), " *
+                  "Symbol(\"DCFixtureDatesExt.ext_unstable\"), Symbol(\"Base.getindex\"), " *
+                  ":lined => \"src/DCFixture.jl:$LINED\", :documented => \"src/DCFixture.jl:$DOCUMENTED\", " *
+                  ":generated, :ccallable, :looped_unstable, Symbol(\"DCFixture.Sub.sub_more_unstable\"))"
+        result = show_failure(run_script(env, "forms", script("""
+            using Dates, Unicode
+            ext = Base.get_extension(DCFixture, :DCFixtureDatesExt)
+            @testset "forms" begin
+                # :foo excludes every definition named foo, in any module
+                @test DCFixture.unstable(1) == 1 && DCFixture.Sub.unstable(1) == 1
+                # Symbol("Mod.foo") excludes only those in that module (or an extension)
+                @test DCFixture.Sub.twin(1) == 1 && detected(DCFixture.twin, 1)
+                @test ext.ext_unstable(1) == 1 && detected(ext.ext_other, 1)
+                # Symbol("Base.getindex") excludes only definitions written that way
+                @test DCFixture.Wrapper()[1] == 1 && detected(getindex, DCFixture.Other(), 1)
+                # :foo => "file:line" excludes only the definition at that line
+                @test DCFixture.lined(1) == 1 && detected(DCFixture.lined, 1, 2)
+                # definitions behind macros (@unstable goes around the macros)
+                @test DCFixture.documented(1) == 1 && occursin("Docs of documented", string(@doc DCFixture.documented))
+                @test DCFixture.generated(1, 2) == 1 && DCFixture.generated(1) == 1
+                @test Base.get_extension(DCFixture, :DCFixtureUnicodeExt).ccallable(1) == 1
+                # files from include calls in loops and with a module argument
+                @test DCFixture.looped_unstable(1) == 1 && DCFixture.Sub.sub_more_unstable(1) == 1
+                # and nothing else
+                for f in (DCFixture.included_unstable, DCFixture.more_unstable,
+                          DCFixture.Sub.sub_included_unstable, DCFixture.Sub.Deeper.deep_unstable)
+                    @test detected(f, 1)
                 end
-                DispatchCheckup.dispatch_doctor(:DCFixtureTarget; unstable=(:foo, :bar))
-                """
-            before_cache = DCF.target_cache_fingerprints()
-            result = DCF.run_pkg_test(sandbox, "active-pkg-test", body;
-                unstable=(:foo, :bar), repeat=true, args=["alpha beta", "λ", "--sentinel"])
-            check_success(result)
-            @test occursin("DCT_EMPTY_PROGRAM_FILE_ENTRY", result.output)
-            flags = DCF.printed_paths(result, "DCT_ENTRY_FLAGS")
-            @test length(flags) == 2
-            @test allequal(flags)
-            check_cleaned_overlay(result, sandbox)
-            @test before_cache == DCF.target_cache_fingerprints()
-        end
-
-        @testset "qualified exclusions do not disable adjacent methods" begin
-            body = FIXTURE_IMPORTS * raw"""
-                @test Target.Nested.foo(1) === 1
-                @test extension.ext_unstable(1) === 1
-                expect_unstable(Target.foo, 1)
-                expect_unstable(Target.foo, Int32(1))
-                expect_unstable(Target.bar, 1)
-                expect_unstable(Target.Nested.nested_unstable, 1)
-                expect_unstable(extension.Nested.nested_ext_unstable, 1)
-                if abspath(PROGRAM_FILE) == @__FILE__
-                    println("DCT_GUARDED_DIRECT_ENTRY")
-                end
-                """
-            entrypoint = joinpath(sandbox.root, "qualified-exclusions.jl")
-            report_path = joinpath(sandbox.root, "reports", "qualified.toml")
-            result = DCF.run_script(sandbox, "qualified-exclusions", body;
-                unstable=(Symbol("DCFixtureTarget.Nested.foo"),
-                          Symbol("DCFixtureTargetDatesExt.ext_unstable")),
-                require_all=true, entrypoint, report=report_path)
-            check_success(result)
-            @test occursin("DCT_GUARDED_DIRECT_ENTRY", result.output)
-            check_cleaned_overlay(result, sandbox)
-            @test isfile(report_path)
-            report = TOML.parsefile(report_path)
-            @test report["target_name"] == "DCFixtureTarget"
-            @test report["target_uuid"] == DCF.FIXTURE_UUIDS["DCFixtureTarget"]
-            @test report["counts"]["instrumented"] >= 15
-            @test report["counts"]["excluded"] == 2
-            @test report["counts"]["unsupported"] == 0
-            @test report["exclusions"]["DCFixtureTarget.Nested.foo"] == 1
-            @test report["exclusions"]["DCFixtureTargetDatesExt.ext_unstable"] == 1
-            @test realpath(report["target_provenance"]["path"]) == realpath(sandbox.target)
-            @test report["helper_provenance"]["uuid"] == "ca055ede-32eb-4961-937e-82d9c5ec6430"
-            @test report["doctor_provenance"]["uuid"] == "8d63f2c5-f18a-4cf2-ba9d-b3f60fc568c8"
-            @test report["dispatch_doctor_version"] == report["doctor_provenance"]["version"]
-            @test all(path -> startswith(path, sandbox.target * string(Base.Filesystem.path_separator)), report["files"])
-            @test joinpath(sandbox.target, "ext", "DCFixtureTargetDatesExt.jl") in report["entries"]
-        end
-
-        @testset "instrumented dependencies remain precompilable" begin
-            before_cache = DCF.target_cache_fingerprints()
-            result = DCF.run_script(sandbox, "active-precompile", FIXTURE_IMPORTS * raw"""
-                using Pkg
-                expect_unstable(Target.root_unstable, 1)
-                Pkg.precompile(["DCFixtureConsumer"]; strict=true)
-                expect_unstable(Target.root_unstable, 1)
-                @test DCFixtureConsumer.token_type() === Target.Token
-                probe = "using DCFixtureConsumer; import DCFixtureTarget; failure = try DCFixtureTarget.root_unstable(1) catch exception; exception end; @assert nameof(typeof(failure)) === :TypeInstabilityError; print(:DCT_CACHED_GUARD_OK)"
-                cached = read(`$(Base.julia_cmd()) --startup-file=no --project=$(dirname(Base.active_project())) -e $probe`, String)
-                @test cached == "DCT_CACHED_GUARD_OK"
-                println("DCT_PRECOMPILE_OK")
-                """; unstable=(:foo, :bar))
-            check_success(result)
-            @test occursin("DCT_PRECOMPILE_OK", result.output)
-            check_cleaned_overlay(result, sandbox)
-            @test before_cache == DCF.target_cache_fingerprints()
-        end
-
-        @testset "unmatched exclusions and activation mismatch fail" begin
-            unmatched = DCF.run_script(sandbox, "unmatched", "using DCFixtureTarget\n";
-                                       unstable=(:misspelled_function,))
-            @test unmatched.code != 0
-            @test unmatched.originals_unchanged
-            @test occursin("unmatched unstable exclusions", lowercase(unmatched.output))
-
-            mismatch = DCF.run_script(sandbox, "mismatch", raw"""
-                DispatchCheckup.dispatch_doctor(:DCFixtureTarget; unstable=(:bar,))
-                using DCFixtureTarget
-                """; unstable=(:foo,))
-            @test mismatch.code != 0
-            @test mismatch.originals_unchanged
-            @test occursin(r"(?i)(configuration|exclusions|mismatch)", mismatch.output)
-            @test !occursin("DCT_BODY_COMPLETE", mismatch.output)
-
-            failure_report = joinpath(sandbox.root, "reports", "exit-zero-unmatched.toml")
-            exited = DCF.run_script(sandbox, "exit-zero-unmatched", "using DCFixtureTarget\nexit(0)\n";
-                unstable=(:misspelled_function,), report=failure_report)
-            @test exited.code != 0
-            @test exited.originals_unchanged
-            @test occursin("unmatched unstable exclusions", lowercase(exited.output))
-            @test isfile(failure_report)
-            report = TOML.parsefile(failure_report)
-            @test report["exclusions"]["DCFixtureTarget.misspelled_function"] == 0
-            @test report["target_uuid"] == DCF.FIXTURE_UUIDS["DCFixtureTarget"]
-        end
-
-        @testset "child configuration cannot be spoofed or reused with a different token" begin
-            spoofed = DCF.run_script(sandbox, "spoofed-config", "using DCFixtureTarget\n";
-                extra_env=Dict("DISPATCH_CHECKUP_CHILD_CONFIG" => joinpath(sandbox.root, "missing-config.toml"),
-                               "DISPATCH_CHECKUP_CHILD_TOKEN" => "not-a-launcher-token",
-                               "DISPATCH_CHECKUP_CHILD_DIGEST" => "not-a-config-digest"))
-            @test spoofed.code != 0
-            @test spoofed.originals_unchanged
-            @test occursin(r"(?i)(configuration|marker|token)", spoofed.output)
-            @test !occursin("DCT_BODY_COMPLETE", spoofed.output)
-
-            tampered = DCF.run_script(sandbox, "tampered-token", raw"""
-                using DCFixtureTarget
-                ENV["DISPATCH_CHECKUP_CHILD_TOKEN"] = "modified-after-activation"
-                DispatchCheckup.dispatch_doctor(:DCFixtureTarget)
-                """)
-            @test tampered.code != 0
-            @test tampered.originals_unchanged
-            @test occursin("token", lowercase(tampered.output))
-            @test !occursin("DCT_BODY_COMPLETE", tampered.output)
-
-            inherited = DCF.run_script(sandbox, "inherited-controller", raw"""
-                using Test, DCFixtureTarget
-                probe = "import DispatchCheckup; DispatchCheckup.dispatch_doctor(:DCFixtureTarget)"
-                mktemp() do _, io
-                    command = `$(Base.julia_cmd()) --startup-file=no --project=$(dirname(Base.active_project())) -e $probe`
-                    process = run(pipeline(ignorestatus(command); stdout=io, stderr=io))
-                    seekstart(io)
-                    output = read(io, String)
-                    @test process.exitcode != 0
-                    @test occursin("inherited without its isolated test controller", output)
-                end
-                """)
-            check_success(inherited)
-            check_cleaned_overlay(inherited, sandbox)
-        end
-
-        @testset "exit status and inherited process state" begin
-            result = DCF.run_script(sandbox, "exit-status", FIXTURE_IMPORTS * raw"""
-                @test ARGS == ["one argument", "--literal"]
-                @test ENV["DCT_SENTINEL"] == "spaces and unicode λ preserved"
-                @test pwd() == ENV["DCT_EXPECTED_CWD"]
-                println("DCT_EXPECTED_EXIT")
-                exit(37)
-                """; unstable=(:foo, :bar), args=["one argument", "--literal"])
-            @test result.code == 37
-            @test result.originals_unchanged
-            @test occursin("DCT_EXPECTED_EXIT", result.output)
-            check_cleaned_overlay(result, sandbox)
-        end
-
-        @testset "tests may consume arguments and change working project" begin
-            result = DCF.run_script(sandbox, "mutable-test-state", FIXTURE_IMPORTS * raw"""
-                using Pkg
-                @test popfirst!(ARGS) == "consumed"
-                @test isempty(ARGS)
-                destination = joinpath(ENV["DCT_EXPECTED_CWD"], "changed-working-directory")
-                mkpath(destination)
-                cd(destination)
-                Pkg.activate(ENV["DCT_ORIGINAL_TARGET"]; io=devnull)
-                expect_unstable(Target.root_unstable, 1)
-                @test pwd() == destination
-                """; unstable=(:foo, :bar), args=["consumed"])
-            check_success(result)
-            check_cleaned_overlay(result, sandbox)
-        end
-
-        @testset "concurrent activations retain independent exclusions" begin
-            before = DCF.original_fingerprints(sandbox)
-            left = @async DCF.run_script(sandbox, "concurrent-foo", FIXTURE_IMPORTS * raw"""
-                @test Target.foo(1) === 1
-                expect_unstable(Target.bar, 1)
-                sleep(0.2)
-                """; unstable=(:foo,))
-            right = @async DCF.run_script(sandbox, "concurrent-bar", FIXTURE_IMPORTS * raw"""
-                @test Target.bar(1) === 1
-                expect_unstable(Target.foo, 1)
-                sleep(0.2)
-                """; unstable=(:bar,))
-            results = (fetch(left), fetch(right))
-            for result in results
-                check_success(result)
-                check_cleaned_overlay(result, sandbox)
             end
-            @test only(DCF.printed_paths(results[1], "DCT_ACTIVE_PROJECT")) !=
-                  only(DCF.printed_paths(results[2], "DCT_ACTIVE_PROJECT"))
-            @test before == DCF.original_fingerprints(sandbox)
-        end
+            """; options)))
+        @test result.code == 0
+    end
 
-        @testset "reported DispatchDoctor skips and strict coverage" begin
-            body = raw"""
-                using Test, DCFixtureSkipped
-                @test DCFixtureSkipped.stable(1) === 2
-                @test DCFixtureSkipped.callback(1) === 1
-                """
-            reported = DCF.run_script(sandbox, "reported-skip", body; target=:DCFixtureSkipped)
-            check_success(reported)
-            @test occursin(r"(?i)(skip|unsupported|uninstrument)", reported.output)
-            @test occursin(r"(?i)(closure|anonymous|->)", reported.output)
-            strict = DCF.run_script(sandbox, "strict-skip", body;
-                                    target=:DCFixtureSkipped, require_all=true)
-            @test strict.code != 0
-            @test strict.originals_unchanged
-            @test occursin(r"(?i)(closure|anonymous|->)", strict.output)
-        end
+    @testset "check (3): unmatched unstable= entries fail before the tests" begin
+        result = run_script(env, "unmatched", script("println(\"DCT_BODY_RAN\")";
+            options = "unstable = (:unstabel, :lined => \"src/DCFixture.jl:999\", :twin)"))
+        @test result.code != 0
+        @test occursin("match no definition", result.output)
+        @test occursin(r"unstabel .*nearest: unstable", result.output)
+        @test occursin("lined => src/DCFixture.jl:999", result.output)
+        @test !occursin("  twin", result.output)
+        @test !occursin("DCT_BODY_RAN", result.output)
+    end
 
-        @testset "dynamic outside-root include cannot escape instrumentation" begin
-            entry = joinpath(sandbox.target, "src", "DCFixtureTarget.jl")
-            original = read(entry, String)
-            outside = joinpath(sandbox.root, "outside.jl")
-            write(outside, "outside_unstable(x::Int) = x > 0 ? x : Float64(x)\n")
-            try
-                write(entry, replace(original, r"\nend\s*$" =>
-                    "\ninclude(ENV[\"DCT_OUTSIDE_INCLUDE\"])\nend\n"))
-                result = DCF.run_script(sandbox, "outside-include", "using DCFixtureTarget\n";
-                    extra_env=Dict("DCT_OUTSIDE_INCLUDE" => outside))
-                @test result.code != 0
-                @test result.originals_unchanged
-                @test occursin(r"(?i)(outside|escape)", result.output)
-                @test !occursin("DCT_BODY_COMPLETE", result.output)
-            finally
-                write(entry, original)
-            end
-        end
+    @testset "check (1): the package is loaded from the overlay" begin
+        early = run_script(env, "early", "using DCFixture\n" * script("println(\"DCT_BODY_RAN\")"))
+        @test early.code != 0
+        @test occursin("DCFixture is already loaded", early.output)
+        @test !occursin("DCT_BODY_RAN", early.output)
 
-        @testset "aliased includes cannot silently replace checked methods" begin
-            entry = joinpath(sandbox.target, "src", "DCFixtureTarget.jl")
-            original = read(entry, String)
-            alias_source = joinpath(sandbox.target, "src", "alias.jl")
-            write(alias_source, "alias_unstable(x::Int) = x > 0 ? x : Float64(x)\n")
-            variants = (
-                ("alias-new-file", "const raw_include = include\nraw_include(\"alias.jl\")"),
-                # bare.jl has already been mapped above. Checking a set of seen
-                # paths would miss this second, uninstrumented definition.
-                ("alias-repeated-file", "const raw_include = Base.include\nraw_include(@__MODULE__, joinpath(@__DIR__, \"bare.jl\"))"),
-            )
-            try
-                for (label, insertion) in variants
-                    write(entry, replace(original, r"\nend\s*$" => "\n" * insertion * "\nend\n"))
-                    result = DCF.run_script(sandbox, label, "using DCFixtureTarget\n")
-                    @test result.code != 0
-                    @test result.originals_unchanged
-                    @test occursin("included source bypassed instrumentation", lowercase(result.output))
-                end
-            finally
-                write(entry, original)
-                rm(alias_source; force=true)
-            end
-        end
+        elsewhere = run_script(env, "elsewhere", """
+            import DispatchCheckup
+            DispatchCheckup.dispatch_doctor(:DCFixture)
+            popfirst!(LOAD_PATH)  # loads the original package instead
+            using DCFixture
+            println("DCT_VALUE=", DCFixture.unstable(1))
+            """)
+        @test elsewhere.code != 0
+        @test occursin("instead of the overlay", elsewhere.output)
+        @test occursin("DCT_VALUE=1", elsewhere.output)
 
-        @testset "include_string aliases cannot bypass source coverage" begin
-            entry = joinpath(sandbox.target, "src", "DCFixtureTarget.jl")
-            original = read(entry, String)
-            try
-                for (label, reference) in (("string-alias", "Base.include_string"),
-                                           ("string-getfield-alias", "getfield(Base, :include_string)"))
-                    insertion = "const raw_string_loader = " * reference * "\n" *
-                        "raw_string_loader(@__MODULE__, \"string_alias_unstable(x::Int) = x > 0 ? x : Float64(x)\", \"aliased-string\")"
-                    write(entry, replace(original, r"\nend\s*$" => "\n" * insertion * "\nend\n"))
-                    result = DCF.run_script(sandbox, label, "using DCFixtureTarget\n")
-                    @test result.code != 0
-                    @test result.originals_unchanged
-                    @test occursin("first-class include_string reference", result.output)
-                end
-            finally
-                write(entry, original)
-            end
-        end
+        # an extension that cannot be built with the checks (the trigger is loaded)
+        broken = run_script(env, "broken_ext", script("using Unicode\nprintln(\"DCT_BODY_RAN\")"))
+        @test broken.code != 0
+        @test occursin("the extension DCFixtureUnicodeExt did not load", broken.output)
+        @test occursin("DCT_BODY_RAN", broken.output)
 
-        @testset "already-loaded target is rejected" begin
-            script = joinpath(sandbox.root, "already-loaded.jl")
-            write(script, "using DCFixtureTarget\nimport DispatchCheckup\n" *
-                "DispatchCheckup.dispatch_doctor(:DCFixtureTarget)\n")
-            before = DCF.original_fingerprints(sandbox)
-            result = DCF.capture(sandbox, "already-loaded",
-                `$(Base.julia_cmd()) --startup-file=no --depwarn=error --project=$(sandbox.environment) $script`)
-            @test result.code != 0
-            @test occursin(r"(?i)(already.loaded|before.*load)", result.output)
-            @test before == DCF.original_fingerprints(sandbox)
+        never = run_script(env, "never", "import DispatchCheckup\n" *
+                           "DispatchCheckup.dispatch_doctor(:DCFixture)\nprintln(\"DCT_BODY_RAN\")\n")
+        @test never.code != 0
+        @test occursin("never loaded, so nothing was checked", never.output)
+        @test occursin("DCT_BODY_RAN", never.output)
+    end
+
+    @testset "runs with other options do not share an overlay" begin
+        # An independent run of the same checkout, excluding `unstable`, activates and loads
+        # the package between this run's activation and its `using`.
+        result = show_failure(run_script(env, "race", """
+            import DispatchCheckup
+            DispatchCheckup.dispatch_doctor(:DCFixture)
+            other = filter(p -> !startswith(first(p), "DISPATCH_CHECKUP"), copy(ENV))
+            other["JULIA_LOAD_PATH"] = "@:@stdlib"
+            run(setenv(`\$(Base.julia_cmd()) --project=\$(Base.active_project()) child_own.jl`, other))
+            using Test, DCFixture
+            @test_throws DispatchCheckup.DispatchDoctor.TypeInstabilityError DCFixture.unstable(1)
+            """))
+        @test result.code == 0
+        @test occursin("DCT_CHILD_OWN 1 true", result.output)
+    end
+
+    @testset "original= guards" begin
+        body = """
+            @test detected(DCFixture.unstable, 1)
+            get(ENV, "DISPATCH_CHECKUP", "") == "checked" || include("guard_ok.jl")
+            println("DCT_SUITE_DONE ", getpid())
+            """
+        ok = show_failure(run_script(env, "guarded", script(body; options = "original = \"guard_ok.jl\"")))
+        @test ok.code == 0
+        @test length(markers(ok.output, "DCT_GUARD_OK")) == 1
+        @test only(markers(ok.output, "DCT_GUARD_OK"))[14:end] != only(markers(ok.output, "DCT_SUITE_DONE"))[16:end]
+        @test findfirst("DCT_SUITE_DONE", ok.output)[1] < findfirst("DCT_GUARD_OK", ok.output)[1]
+
+        failing = run_script(env, "failing", script(body; options = "original = (\"guard_fail.jl\", \"guard_ok.jl\")"))
+        @test failing.code != 0
+        @test occursin("DCT_GUARD_FAIL_RAN", failing.output)
+        @test length(markers(failing.output, "DCT_GUARD_OK")) == 1
+
+        off = show_failure(run_script(env, "guard_off", script("""
+            get(ENV, "DISPATCH_CHECKUP", "") == "checked" || include("guard_ok.jl")
+            """; activate = false, options = "original = \"guard_ok.jl\"")))
+        @test off.code == 0
+        @test length(markers(off.output, "DCT_GUARD_OK")) == 1
+    end
+
+    @testset "a new configuration rebuilds the precompiled image" begin
+        for (options, body) in (("", "@test detected(DCFixture.unstable, 1)"),
+                                ("unstable = :unstable", "@test DCFixture.unstable(1) == 1"),
+                                ("mode = \"warn\"", "@test (@test_logs (:warn,) match_mode = :any DCFixture.unstable(1)) == 1"),
+                                ("", "@test detected(DCFixture.unstable, 1)"))
+            result = show_failure(run_script(env, "rebuild", script(body; options)))
+            @test result.code == 0
         end
     end
+
+    @testset "check (2): the DispatchDoctor fork must be loaded" begin
+        fake = joinpath(sandbox, "FakeDoctor")
+        write_files(fake, Dict("src/DispatchDoctor.jl" => "module DispatchDoctor\nconst JULIA_OK = true\nend\n",
+                               "Project.toml" => Dict("name" => "DispatchDoctor", "uuid" => UUIDS["DispatchDoctor"],
+                                                      "version" => "0.4.29")))
+        unforked = joinpath(sandbox, "unforked")
+        manifest = Fixtures.TOML.parsefile(joinpath(env, "Manifest.toml"))
+        for records in values(manifest["deps"]), record in records
+            haskey(record, "path") && (record["path"] = normpath(env, record["path"]))
+        end
+        records = manifest["deps"]["DispatchDoctor"]  # (the fork and the registered one)
+        records[findfirst(r -> r["uuid"] == UUIDS["DispatchDoctor"], records)] =
+            Dict("uuid" => UUIDS["DispatchDoctor"], "version" => "0.4.29", "path" => fake)
+        write_files(unforked, Dict("Project.toml" => Fixtures.TOML.parsefile(joinpath(env, "Project.toml")),
+                                   "Manifest.toml" => manifest))
+        result = run_script(unforked, "unforked", script("println(\"DCT_BODY_RAN\")"))
+        @test result.code != 0
+        @test occursin("needs the DispatchDoctor fork", result.output)
+        @test occursin(joinpath(fake, "src", "DispatchDoctor.jl"), result.output)
+        @test !occursin("DCT_BODY_RAN", result.output)
+    end
+
+    @testset "the package's files are unchanged" begin
+        after = Fixtures.snapshot(sandbox)
+        @test all(after[path] == hash for (path, hash) in before)
+    end
+    foreach(Fixtures.remove_overlays, ("DCFixture", "DCBare", "DCUsesDoctor"))
 end
 
-include("test_launcher.jl")
+# A package whose tests also use the registered DispatchDoctor (a test dependency): its
+# `allow_unstable` pauses the checks (on every thread; the checked run has four), and with
+# the two lines commented out the fork is not loaded at all.
+const ALLOW_UNSTABLE_TESTS = """
+    LINES
+    using Test, DCAllowUnstable
+    import DispatchDoctor  # the registered package
+    @testset "DCAllowUnstable" begin
+        @test string(Base.PkgId(DispatchDoctor).uuid) == "$(Fixtures.REGISTERED_DOCTOR)"
+        @test DCAllowUnstable.stable(1) == 2
+        @test DispatchDoctor.allow_unstable(() -> DCAllowUnstable.unstable(1)) == 1
+        if get(ENV, "DISPATCH_CHECKUP", "") == "checked"
+            fork = DispatchCheckup.DispatchDoctor
+            @test string(Base.PkgId(fork).uuid) == "$(UUIDS["DispatchDoctor"])"
+            # outside allow_unstable (also after it), the fork's TypeInstabilityError
+            thrown = try DCAllowUnstable.unstable(1); nothing catch e; e end
+            @test thrown isa fork.TypeInstabilityError
+            @test !(thrown isa DispatchDoctor.TypeInstabilityError)
+            @test DispatchDoctor.allow_unstable() do
+                DispatchDoctor.allow_unstable(() -> DCAllowUnstable.unstable(1)) +
+                DCAllowUnstable.unstable(-1)
+            end == 1
+            @test_throws fork.TypeInstabilityError DCAllowUnstable.unstable(1)
+            # threads that run checked code inside one allow_unstable are all paused
+            @test Threads.nthreads() == 4
+            function threaded(n)
+                Threads.@threads for i in 1:n
+                    DCAllowUnstable.unstable(i)
+                end
+                return n
+            end
+            @test DispatchDoctor.allow_unstable(() -> threaded(4000)) == 4000
+            thrown = try threaded(4000); nothing catch e; e end
+            while thrown isa CompositeException || thrown isa TaskFailedException
+                thrown = thrown isa CompositeException ? first(thrown.exceptions) : thrown.task.exception
+            end
+            @test thrown isa fork.TypeInstabilityError
+            println("DCT_CHECKED")
+        else
+            @test DCAllowUnstable.unstable(1) == 1
+            doctors = [id for id in keys(Base.loaded_modules) if id.name == "DispatchDoctor"]
+            @test doctors == [Base.PkgId(DispatchDoctor)]
+            @test !haskey(Base.loaded_modules, Base.PkgId(Base.UUID("$(UUIDS["DispatchDoctor"])"), "DispatchDoctor"))
+            println("DCT_ORDINARY")
+        end
+    end
+    """
+const ALLOW_UNSTABLE_LINES = "import DispatchCheckup\nDispatchCheckup.dispatch_doctor(:DCAllowUnstable)"
+
+mktempdir() do sandbox
+    @testset "the registered DispatchDoctor's allow_unstable" begin
+        dir = joinpath(sandbox, "DCAllowUnstable")
+        write_files(dir, Dict(
+            "Project.toml" => package_project("DCAllowUnstable"),
+            "src/DCAllowUnstable.jl" => """
+                module DCAllowUnstable
+                stable(x) = x + 1
+                unstable(x) = x > 0 ? x : 0.0
+                end
+                """,
+            "test/Project.toml" => Dict(
+                "deps" => merge(Dict(n => UUIDS[n] for n in ("DCAllowUnstable", "DispatchCheckup", "Test")),
+                                Dict("DispatchDoctor" => Fixtures.REGISTERED_DOCTOR)),
+                "compat" => Dict("DispatchCheckup" => "0.2", "DispatchDoctor" => "0.4.29"),
+                "sources" => Dict("DCAllowUnstable" => Dict("path" => ".."),
+                                  "DispatchCheckup" => Dict("path" => CHECKUP)))))
+        for (lines, marker, args) in ((ALLOW_UNSTABLE_LINES, "DCT_CHECKED", "julia_args = [\"--threads=4\"]"),
+                                      (replace(ALLOW_UNSTABLE_LINES, r"^"m => "# "), "DCT_ORDINARY", ""))
+            write_files(dir, Dict("test/runtests.jl" => replace(ALLOW_UNSTABLE_TESTS, "LINES" => lines)))
+            result = julia("--project=$dir", "-e", "using Pkg; Pkg.test($args)"; dir)
+            result.code == 0 || println(result.output)
+            @test result.code == 0
+            @test occursin(marker, result.output)
+        end
+    end
+    Fixtures.remove_overlays("DCAllowUnstable")
+end
