@@ -1,6 +1,0 @@
-name = "DCFixtureSkipped"
-uuid = "0fe9d090-7ca4-44c6-8024-89ad1aa4c999"
-version = "0.1.0"
-
-[compat]
-julia = "1.10"
