@@ -1,46 +1,31 @@
 name = "DispatchCheckup"
 uuid = "ca055ede-32eb-4961-937e-82d9c5ec6430"
-version = "0.1.2"
+version = "0.2.0"
 authors = ["Azamat Berdyshev <aberdysh@gmail.com>"]
 
 [deps]
-DispatchDoctor = "8d63f2c5-f18a-4cf2-ba9d-b3f60fc568c8"
+DispatchDoctor = "c2bcafe0-aaa5-4bef-983d-8af4248d41f3"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
-Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-Preferences = "21216c6a-2e73-6563-6e65-726566657250"
-SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
-UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+
+[sources]
+DispatchDoctor = {url = "https://github.com/AzamatB/DispatchDoctor.jl", rev = "f598693d0ee9a5a4d82a36289fb0191a0b4d7bb9"}
+Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "24dd3cbe746633f58cd5bd988d5a9ba6cbd6a6c8"}
+CheckConcreteStructs = {url = "https://github.com/AzamatB/CheckConcreteStructs.jl.git", rev = "fb7bc8dbdf71ce30f398d0c3f7b95e96a0210125"}
 
 [compat]
 DispatchDoctor = "0.4.29"
-MacroTools = "0.5.16"
-Pkg = "1.13"
-Preferences = "1.6.1"
-SHA = "1"
+MacroTools = "0.5"
 TOML = "1"
-UUIDs = "1"
-julia = "~1.13"
-Test = "1"
+julia = "1.13"
 Aqua = "1"
 CheckConcreteStructs = "0.1"
-Distributed = "1"
-JLLWrappers = "1.7"
-Artifacts = "1"
-Libdl = "1"
+Test = "1"
 
 [extras]
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 CheckConcreteStructs = "73c92db5-9da6-4938-911a-6443a7e94a58"
-Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
-JLLWrappers = "692b3bcd-3c85-4b1f-b108-f13ce0eb3210"
-Artifacts = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
-Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "Aqua", "CheckConcreteStructs", "Distributed", "JLLWrappers", "Artifacts", "Libdl"]
-
-[sources]
-Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "24dd3cbe746633f58cd5bd988d5a9ba6cbd6a6c8"}
-CheckConcreteStructs = {url = "https://github.com/AzamatB/CheckConcreteStructs.jl.git", rev = "fb7bc8dbdf71ce30f398d0c3f7b95e96a0210125"}
+test = ["Test", "Aqua", "CheckConcreteStructs"]

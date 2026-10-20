@@ -1,97 +1,149 @@
+# Manual tier: checked runs of a CUDA package (needs a GPU and the test/gpu environment):
+#   julia --project=test/gpu -e 'using Pkg; Pkg.instantiate()'
+#   DISPATCHCHECKUP_GPU_TESTS=1 julia --project=test/gpu test/runtests.jl test_gpu.jl
 using Test
 
 get(ENV, "DISPATCHCHECKUP_GPU_TESTS", "0") == "1" ||
-    error("Native GPU qualification requires DISPATCHCHECKUP_GPU_TESTS=1 and the test/gpu environment")
+    error("the CUDA tests need DISPATCHCHECKUP_GPU_TESTS=1 and the test/gpu environment")
 
 using CUDA
-isdefined(@__MODULE__, :DispatchCheckupFixtures) || include("fixtures/test_support.jl")
-const DCGPUF = DispatchCheckupFixtures
+isdefined(@__MODULE__, :Fixtures) || include("support.jl")
+using .Fixtures: Fixtures, UUIDS, CHECKUP, write_files, package_project, julia, resolve
 
-const GPU_STABLE_BODY = raw"""
-using Test, CUDA, DCFixtureGPU
-@test CUDA.functional()
-println("DCT_GPU_DEVICE=", CUDA.name(CUDA.device()))
-println("DCT_GPU_RUNTIME=", CUDA.runtime_version())
-println("DCT_GPU_TARGET=", pkgdir(DCFixtureGPU))
-input = CuArray(Float32[-2, -1, 0, 1, 2])
-output = similar(input)
-CUDA.@sync @cuda threads=32 DCFixtureGPU.stable_kernel!(output, input)
-@test Array(output) == Float32[-4, -2, 0, 2, 4]
-wide_output = CUDA.zeros(Float64, 1)
-wide_args = ntuple(Float64, 36)
-CUDA.@sync @cuda threads=1 DCFixtureGPU.wide_kernel!(wide_output, wide_args...)
-@test only(Array(wide_output)) == 37.0
-CUDA.@sync @cuda threads=1 DCFixtureGPU.override_kernel!(wide_output, 3.0, 7.0)
-@test only(Array(wide_output)) == 21.0
-typed_output = CUDA.zeros(Float64, 3)
-typed_x = CUDA.ones(Float64, 3)
-typed_matrix = CUDA.ones(Float64, 6, 3)
-typed_indices = CUDA.ones(Int32, 4)
-CUDA.@sync @cuda threads=3 DCFixtureGPU.typed_val_kernel!(typed_output, typed_x,
-    typed_matrix, typed_matrix, typed_output, typed_indices, typed_matrix,
-    typed_indices, typed_indices, typed_indices, typed_x, Int32(3), Val(true), Val(false))
-@test Array(typed_output) == fill(2.0, 3)
-"""
+const GPU_FIXTURE = Dict(
+    "Project.toml" => package_project("DCFixtureGPU"; deps = Dict("CUDA" => UUIDS["CUDA"])),
+    "src/DCFixtureGPU.jl" => """
+        module DCFixtureGPU
 
-@testset "DispatchCheckup native CUDA qualification" begin
+        using CUDA
+
+        stable_device(x::Float32) = x + x
+        unstable_device(x::Int32) = x > Int32(0) ? x : Float32(x)
+
+        function stable_kernel!(output, input)
+            index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+            if index <= length(output)
+                @inbounds output[index] = stable_device(input[index])
+            end
+            return nothing
+        end
+
+        function unstable_kernel!(output, input)
+            index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+            if index <= length(output)
+                @inbounds output[index] = Float32(unstable_device(input[index]))
+            end
+            return nothing
+        end
+
+        # A wide argument list must not need a host-side tuple in the check.
+        function wide_kernel!(output, $(join(("x$i" for i in 1:36), ", ")))
+            output[1] = x1 + x36
+            return nothing
+        end
+
+        @inline override_product(x::Float64, y::Float64) = x * y
+        CUDA.@device_override @noinline override_product(x::Float64, y::Float64) = x * y
+
+        function override_kernel!(output, x, y)
+            output[1] = override_product(x, y)
+            return nothing
+        end
+
+        function typed_val_kernel!(out, x, off, nc, ::Val{HAS_X}) where {HAS_X}
+            index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
+            if index <= nc
+                @inbounds out[index] = x[index] + (HAS_X ? off[1, index] : 0.0)
+            end
+            return nothing
+        end
+
+        end
+        """)
+
+const GPU_BODY = """
     @test CUDA.functional()
-    @info "Native CUDA qualification" device=CUDA.name(CUDA.device()) runtime=CUDA.runtime_version()
-    DCGPUF.with_sandbox(; gpu=true) do sandbox
-        control = DCGPUF.run_script(sandbox, "gpu-ordinary", GPU_STABLE_BODY * raw"""
-            integers = CuArray(Int32[-2, -1, 0, 1, 2])
+    println("DCT_GPU_DEVICE=", CUDA.name(CUDA.device()))
+    @test pkgdir(DCFixtureGPU) == ENV["DCT_ROOT"]
+    input = CuArray(Float32[-2, -1, 0, 1, 2])
+    output = similar(input)
+    CUDA.@sync @cuda threads=32 DCFixtureGPU.stable_kernel!(output, input)
+    @test Array(output) == Float32[-4, -2, 0, 2, 4]
+    wide = CUDA.zeros(Float64, 1)
+    CUDA.@sync @cuda threads=1 DCFixtureGPU.wide_kernel!(wide, ntuple(Float64, 36)...)
+    @test only(Array(wide)) == 37.0
+    CUDA.@sync @cuda threads=1 DCFixtureGPU.override_kernel!(wide, 3.0, 7.0)
+    @test only(Array(wide)) == 21.0
+    typed = CUDA.zeros(Float64, 3)
+    CUDA.@sync @cuda threads=3 DCFixtureGPU.typed_val_kernel!(typed, CUDA.ones(Float64, 3),
+        CUDA.ones(Float64, 6, 3), Int32(3), Val(true))
+    @test Array(typed) == fill(2.0, 3)
+    integers = CuArray(Int32[-2, -1, 0, 1, 2])
+    """
+
+# DispatchDoctor applies `CUDA.@device_override` to its inferred copy of the function too,
+# which cannot work, so that definition is excluded by its line.
+const OVERRIDE = findfirst(startswith("CUDA.@device_override"), split(GPU_FIXTURE["src/DCFixtureGPU.jl"], '\n'))
+const UNSTABLE_OVERRIDE = ":override_product => \"src/DCFixtureGPU.jl:$OVERRIDE\""
+
+gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE") = """
+    $(activate ? "" : "# ")import DispatchCheckup
+    $(activate ? "" : "# ")DispatchCheckup.dispatch_doctor(:DCFixtureGPU$(isempty(options) ? "" : "; $options"))
+    using Test, CUDA, DCFixtureGPU
+    @testset "GPU" begin
+    $GPU_BODY
+    $body
+    end
+    """
+
+@testset "DispatchCheckup with CUDA" begin
+    @test CUDA.functional()
+    mktempdir() do sandbox
+        package = write_files(joinpath(sandbox, "DCFixtureGPU"), GPU_FIXTURE)
+        env = joinpath(sandbox, "env")
+        # The test/gpu manifest (absolute paths), plus the fixture package.
+        manifest = Fixtures.TOML.parsefile(Base.project_file_manifest_path(Base.active_project()))
+        for records in values(manifest["deps"]), record in records
+            haskey(record, "path") && (record["path"] = normpath(dirname(Base.active_project()), record["path"]))
+        end
+        write_files(env, Dict("Manifest.toml" => manifest, "Project.toml" => Dict(
+            "deps" => Dict(n => UUIDS[n] for n in ("CUDA", "DispatchCheckup", "Test", "DCFixtureGPU")),
+            "sources" => Dict("DispatchCheckup" => Dict("path" => CHECKUP),
+                              "DCFixtureGPU" => Dict("path" => package)))))
+        resolve(env)
+        run_gpu(name, text) = (write(joinpath(env, "$name.jl"), text);
+            julia("--project=$env", joinpath(env, "$name.jl"); dir = env, env = Dict("DCT_ROOT" => package)))
+
+        ordinary = run_gpu("ordinary", gpu_script("""
             CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
             @test Array(output) == Float32[-2, -1, 0, 1, 2]
-            @test !fixture_loaded("DispatchDoctor")
-            """; target=:DCFixtureGPU, active=false)
-        control.code == 0 || @error "ordinary GPU fixture failed" output=control.output
-        @test control.code == 0
-        @test control.originals_unchanged
+            @test !any(id -> id.name == "DispatchDoctor", keys(Base.loaded_modules))
+            """; activate = false))
+        ordinary.code == 0 || println(ordinary.output)
+        @test ordinary.code == 0
 
-        guarded = DCGPUF.run_script(sandbox, "gpu-instrumented", GPU_STABLE_BODY * raw"""
-            host_failure = try
-                DCFixtureGPU.unstable_device(Int32(1))
-            catch exception
-                exception
-            end
-            @test nameof(typeof(host_failure)) === :TypeInstabilityError
-            integers = CuArray(Int32[-2, -1, 0, 1, 2])
-            device_failure = try
+        checked = run_gpu("checked", gpu_script("""
+            @test_throws DispatchCheckup.DispatchDoctor.TypeInstabilityError DCFixtureGPU.unstable_device(Int32(1))
+            # The check's error path is not valid device code, so the kernel fails to compile.
+            failure = try
                 CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
                 nothing
             catch exception
                 exception
             end
-            # DispatchDoctor's deliberate error path is not valid device IR.
-            # This is a compile-time failure, not an on-device TypeInstabilityError.
-            @test nameof(typeof(device_failure)) === :InvalidIRError
-            println("DCT_GPU_FAILURE=", nameof(typeof(device_failure)))
-            """; target=:DCFixtureGPU)
-        guarded.code == 0 || @error "instrumented GPU fixture failed" output=guarded.output
-        @test guarded.code == 0
-        @test guarded.originals_unchanged
-        @test occursin("DCT_GPU_FAILURE=InvalidIRError", guarded.output)
+            @test nameof(typeof(failure)) === :InvalidIRError
+            """))
+        checked.code == 0 || println(checked.output)
+        @test checked.code == 0
 
-        excluded = DCGPUF.run_script(sandbox, "gpu-excluded-helper", GPU_STABLE_BODY * raw"""
-            integers = CuArray(Int32[-2, -1, 0, 1, 2])
+        excluded = run_gpu("excluded", gpu_script("""
             CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
             @test Array(output) == Float32[-2, -1, 0, 1, 2]
             @test DCFixtureGPU.unstable_device(Int32(1)) === Int32(1)
-            println("DCT_GPU_EXCLUSION_OK")
-            """; target=:DCFixtureGPU, unstable=(:unstable_device,))
-        excluded.code == 0 || @error "excluded GPU helper fixture failed" output=excluded.output
+            """; options = "unstable = (:unstable_device, $UNSTABLE_OVERRIDE)"))
+        excluded.code == 0 || println(excluded.output)
         @test excluded.code == 0
-        @test excluded.originals_unchanged
-        @test occursin("DCT_GPU_EXCLUSION_OK", excluded.output)
-        for result in (guarded, excluded)
-            @test count(==("DCT_BODY_COMPLETE"), split(result.output, '\n')) == 1
-            for path in DCGPUF.printed_paths(result, "DCT_ACTIVE_PROJECT")
-                @test !ispath(dirname(path))
-            end
-            for path in DCGPUF.printed_paths(result, "DCT_GPU_TARGET")
-                @test path != sandbox.packages["DCFixtureGPU"]
-                @test !ispath(path)
-            end
-        end
-        @info "Native CUDA fixture results" ordinary=control.code instrumented=guarded.code excluded=excluded.code
+        @info "CUDA fixture results" ordinary.code checked.code excluded.code
+        Fixtures.remove_overlays("DCFixtureGPU")
     end
 end
