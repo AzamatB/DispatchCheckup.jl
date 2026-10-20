@@ -25,7 +25,7 @@ Test = "1"
 Aqua = "1"
 CheckConcreteStructs = "0.1"
 Distributed = "1"
-JLLWrappers = "1.7"
+JLLWrappers = "1.8.0"
 Artifacts = "1"
 Libdl = "1"
 
@@ -42,5 +42,5 @@ Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 test = ["Test", "Aqua", "CheckConcreteStructs", "Distributed", "JLLWrappers", "Artifacts", "Libdl"]
 
 [sources]
-Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "24dd3cbe746633f58cd5bd988d5a9ba6cbd6a6c8"}
+Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "82bb82d6e1fb57ce74cf34191ce35eb1fc240032"}
 CheckConcreteStructs = {url = "https://github.com/AzamatB/CheckConcreteStructs.jl.git", rev = "fb7bc8dbdf71ce30f398d0c3f7b95e96a0210125"}
