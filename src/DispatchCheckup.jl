@@ -102,7 +102,7 @@ function _activate(pkg::Symbol, exclusions::Vector{Exclusion}, guards::Vector{St
     ENV["DISPATCH_CHECKUP_ENVIRONMENT"] = environment
     ENV["DISPATCH_CHECKUP"] = "checked"
 
-    _check_options(t.id.uuid, cfg)  # check (2), for the package that is not loaded yet
+    _check_options(t.uuid, cfg)  # check (2), for the package that is not loaded yet
 
     CONFIG[] = cfg
     ACTIVE[] = Activation(cfg, shims, t.triggers, guards, project, variables, directory,

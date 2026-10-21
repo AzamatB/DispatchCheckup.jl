@@ -1,7 +1,7 @@
 # Checked runs of generated fixture packages, each in a fresh Julia process.
 using Test
 isdefined(@__MODULE__, :Fixtures) || include("support.jl")
-using .Fixtures: Fixtures, UUIDS, CHECKUP, USES_DOCTOR, write_files, package_project, julia, resolve
+using .Fixtures: CHECKUP, Fixtures, USES_DOCTOR, UUIDS, julia, package_project, resolve, write_files
 
 const WIDE = "wide(" * join(("x$i" for i in 1:36), ", ") * ") = x1 + x36"
 
@@ -148,12 +148,12 @@ function script(body; pkg = :DCFixture, activate = true, options = "", prelude =
         """ * body
 end
 
-function run_script(env, name, text)
+function run_script(env::String, name, text)
     file = joinpath(env, "$name.jl")
     write(file, text)
     return julia("--project=$env", file; dir = env, env = Dict("DCT_ROOT" => root(env, "DCFixture")))
 end
-root(env, pkg) = joinpath(dirname(env), pkg)
+root(env::String, pkg) = joinpath(dirname(env), pkg)
 markers(output, key) = [line for line in split(output, '\n') if startswith(line, key)]
 
 function show_failure(result)
@@ -396,7 +396,7 @@ mktempdir() do sandbox
         @test ok.code == 0
         @test length(markers(ok.output, "DCT_GUARD_OK")) == 1
         @test only(markers(ok.output, "DCT_GUARD_OK"))[14:end] != only(markers(ok.output, "DCT_SUITE_DONE"))[16:end]
-        @test findfirst("DCT_SUITE_DONE", ok.output)[1] < findfirst("DCT_GUARD_OK", ok.output)[1]
+        @test something(findfirst("DCT_SUITE_DONE", ok.output))[1] < something(findfirst("DCT_GUARD_OK", ok.output))[1]
 
         failing = run_script(env, "failing", script(body; options = "original = (\"guard_fail.jl\", \"guard_ok.jl\")"))
         @test failing.code != 0
@@ -430,7 +430,7 @@ mktempdir() do sandbox
         for records in values(manifest["deps"]), record in records
             haskey(record, "path") && (record["path"] = normpath(env, record["path"]))
         end
-        records = manifest["deps"]["DispatchDoctor"]  # (the fork and the registered one)
+        records = manifest["deps"]["DispatchDoctor"]::Vector{Any}  # (the fork and the registered one)
         records[findfirst(r -> r["uuid"] == UUIDS["DispatchDoctor"], records)] =
             Dict("uuid" => UUIDS["DispatchDoctor"], "version" => "0.4.29", "path" => fake)
         write_files(unforked, Dict("Project.toml" => Fixtures.TOML.parsefile(joinpath(env, "Project.toml")),

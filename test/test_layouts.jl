@@ -2,7 +2,7 @@
 # DispatchDoctor fork through DispatchCheckup's [sources].
 using Test
 isdefined(@__MODULE__, :Fixtures) || include("support.jl")
-using .Fixtures: Fixtures, UUIDS, CHECKUP, USES_DOCTOR, write_files, package_project, julia
+using .Fixtures: CHECKUP, Fixtures, USES_DOCTOR, UUIDS, julia, package_project, write_files
 
 const LAYOUT_TESTS = """
     import DispatchCheckup
