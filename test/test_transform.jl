@@ -24,20 +24,21 @@ excluded(entry, code; kws...) = DC._excludes(only(DC._exclusions(entry)), defini
 end
 
 @testset "definitions" begin
-    d = definition("Base.getindex(x::T, i) where {T} = 1")
+    d = something(definition("Base.getindex(x::T, i) where {T} = 1"))
     @test (d.written, d.final, d.file, d.line) == ("Base.getindex", "getindex", normpath("src/M.jl"), 1)
-    @test definition("function Base.:+(a, b)\n a\nend").written == "Base.+"
-    @test definition("(f::Foo)(x) = 1").final == ""
-    @test definition("x -> x").final == ""
+    @test something(definition("function Base.:+(a, b)\n a\nend")).written == "Base.+"
+    @test something(definition("(f::Foo)(x) = 1")).final == ""
+    @test something(definition("x -> x")).final == ""
     @test definition("function f end") === nothing
     @test definition("a[i] = 1") === nothing
     @test definition("x = f(y)") === nothing
     # a line without a file (from a user's include mapper, say)
-    nofile = DC._definition(Expr(:(=), :(f(x)), Expr(:block, LineNumberNode(3), :x)), "M", "/pkg")
+    nofile = something(DC._definition(Expr(:(=), :(f(x)), Expr(:block, LineNumberNode(3), :x)), "M", "/pkg"))
     @test (nofile.final, nofile.file, nofile.line) == ("f", "", 3)
     # a definition behind macros (`@generated`, docstrings, ...)
-    @test DC._definition(DC._unwrap(Meta.parse("@generated f(x) = :(x)")), "M", "/pkg").final == "f"
-    @test DC._definition(DC._unwrap(Meta.parse("\"doc\"\nBase.@ccallable f(x::Int)::Int = x")), "M", "/pkg").final == "f"
+    @test something(DC._definition(DC._unwrap(Meta.parse("@generated f(x) = :(x)")), "M", "/pkg")).final == "f"
+    @test something(DC._definition(DC._unwrap(Meta.parse("\"doc\"\nBase.@ccallable f(x::Int)::Int = x")),
+                                   "M", "/pkg")).final == "f"
 end
 
 @testset "matching" begin
@@ -61,8 +62,8 @@ end
 
 @testset "include calls" begin
     call(code) = DC._include_call(Meta.parse(code))
-    @test call("include(\"a.jl\")")[[1, 3]] == (identity, "a.jl")
-    @test call("include(f, \"a.jl\")")[[1, 3]] == (:f, "a.jl")
+    @test something(call("include(\"a.jl\")"))[[1, 3]] == (identity, "a.jl")
+    @test something(call("include(f, \"a.jl\")"))[[1, 3]] == (:f, "a.jl")
     @test call("Base.include(M, \"a.jl\")") == (identity, :M, "a.jl")
     @test call("Base.include(f, M, \"a.jl\")") == (:f, :M, "a.jl")
     @test call("Core.include(M, \"a.jl\")") == (identity, :M, "a.jl")
@@ -158,6 +159,17 @@ end
     @test_throws ArgumentError DC.dispatch_doctor(:Test; original = "no_such_file.jl")
     @test_throws ErrorException DC.dispatch_doctor(:NoSuchPackage)
     @test_throws ErrorException DC.dispatch_doctor(:Test)  # already loaded
+    mktempdir() do dir  # a package without a Project.toml, in an implicit environment
+        mkpath(joinpath(dir, "DCNoUUID", "src"))
+        write(joinpath(dir, "DCNoUUID", "src", "DCNoUUID.jl"), "module DCNoUUID end\n")
+        pushfirst!(LOAD_PATH, dir)
+        try
+            e = try DC.dispatch_doctor(:DCNoUUID); nothing catch e; e end
+            @test occursin("package DCNoUUID has no UUID", sprint(showerror, e))
+        finally
+            popfirst!(LOAD_PATH)
+        end
+    end
     @test LOAD_PATH == load_path
     @test !haskey(ENV, "DISPATCH_CHECKUP")
     @test DC.ACTIVE[] === nothing

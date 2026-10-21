@@ -14,13 +14,13 @@ end
 function Exclusion(name::String, location::String)
     m = match(r"^([^.]+(?:\.[^.]+)*)\.(.+)$", name)
     qualifier, final = m === nothing ? ("", name) :
-                       (String(m[1]), String(strip(lstrip(m[2], ':'), ['(', ')'])))
+                       (String(something(m[1])), String(strip(lstrip(something(m[2]), ':'), ['(', ')'])))
     file, line = "", 0
     if !isempty(location)
         l = match(r"^(.+):(\d+)$", location)
         l === nothing && throw(ArgumentError(
             "an unstable= location must look like \"src/file.jl:LINE\", got $(repr(location))"))
-        file, line = normpath(l[1]), parse(Int, l[2])
+        file, line = normpath(something(l[1])), parse(Int, something(l[2]))
     end
     return Exclusion(name, location, qualifier, final, file, line)
 end
@@ -122,7 +122,7 @@ function _transform(mod::Module, ex, source::Union{LineNumberNode,Nothing} = not
     cfg = CONFIG[]
     cfg === nothing && error("DispatchCheckup: no checked package is being loaded")
     _check_options(mod, cfg)
-    ex = _walk(ex, join(fullname(mod), '.')) do e, modpath
+    ex = _walk(ex, join(fullname(mod), '.')::String) do e, modpath
         d = _definition(_unwrap(e), modpath, cfg.root)
         if d !== nothing  # (function bodies run later; their includes are left alone)
             any(x -> _excludes(x, d), cfg.unstable) || return e
@@ -201,38 +201,47 @@ function _load_checked(loader::Module, pkg::Base.PkgId, target::Base.PkgId, entr
     return Base.include(ex -> _mark(ex, pkg, entry), loader, entry)
 end
 
+# The state of a static scan: the package root, the definitions found, the include calls
+# that could not be followed, and the files read (with the module each was read into).
+const Scan = @NamedTuple{root::String, found::Vector{Any}, skipped::Vector{String},
+                         seen::Set{Tuple{String,String}}}
+
 # Check (3), at activation: parse the package from its entry files, following the include
 # calls whose path and module can be worked out, and return every definition found (for the
 # matcher and suggestions) and the include calls that could not be followed.
 function _scan(root::String, entries)
-    found, skipped, seen = [], String[], Set{Tuple{String,String}}()
-    function walk(ex, file, modpath)
-        _walk(ex, modpath) do e, m
-            d = _definition(_unwrap(e), m, root)
-            d === nothing || (push!(found, d); return e)
-            if Meta.isexpr(e, :for) && Meta.isexpr(e.args[1], :(=))  # for f in ("a.jl", ...)
-                var, values = e.args[1].args
-                if Meta.isexpr(values, (:tuple, :vect)) && all(v -> v isa String, values.args)
-                    foreach(v -> walk(postwalk(x -> x === var ? v : x, e.args[2]), file, m), values.args)
-                    return e
-                end
+    scan = Scan((root, [], String[], Set{Tuple{String,String}}()))
+    foreach(entry -> _scan_file!(scan, entry, ""), entries)
+    return scan.found, scan.skipped
+end
+
+function _scan_file!(scan::Scan, file::String, modpath::String)
+    ((file, modpath) in scan.seen || !isfile(file)) && return
+    push!(scan.seen, (file, modpath))
+    return _scan_code!(scan, Meta.parseall(read(file, String); filename = file), file, modpath)
+end
+
+function _scan_code!(scan::Scan, ex, file::String, modpath::String)
+    _walk(ex, modpath) do e, m
+        d = _definition(_unwrap(e), m, scan.root)
+        d === nothing || (push!(scan.found, d); return e)
+        if Meta.isexpr(e, :for) && Meta.isexpr(e.args[1], :(=))  # for f in ("a.jl", ...)
+            var, values = e.args[1].args
+            if Meta.isexpr(values, (:tuple, :vect)) && all(v -> v isa String, values.args)
+                foreach(v -> _scan_code!(scan, postwalk(x -> x === var ? v : x, e.args[2]), file, m),
+                        values.args)
+                return e
             end
-            call = _include_call(e)
-            call === nothing && return nothing
-            path, inner = _path(call[3], file), _modpath(call[2], m)
-            path === nothing || inner === nothing ?
-                push!(skipped, "$(relpath(file, root)): " * replace(string(e), r"#=.*?=# " => "")) :
-                read_file(normpath(dirname(file), path), inner)
-            return e
         end
+        call = _include_call(e)
+        call === nothing && return nothing
+        path, inner = _path(call[3], file), _modpath(call[2], m)
+        path === nothing || inner === nothing ?
+            push!(scan.skipped, "$(relpath(file, scan.root)): " * replace(string(e), r"#=.*?=# " => "")) :
+            _scan_file!(scan, normpath(dirname(file), path), inner)
+        return e
     end
-    function read_file(file, modpath)
-        ((file, modpath) in seen || !isfile(file)) && return
-        push!(seen, (file, modpath))
-        walk(Meta.parseall(read(file, String); filename = file), file, modpath)
-    end
-    foreach(entry -> read_file(entry, ""), entries)
-    return found, skipped
+    return nothing
 end
 
 # A path built from strings, `@__DIR__`, `@__FILE__`, `joinpath`, `dirname` and string

@@ -6,18 +6,21 @@ const CHECKUP = Base.PkgId(Base.UUID("ca055ede-32eb-4961-937e-82d9c5ec6430"), "D
 _project_file(dir) = (files = filter(isfile, joinpath.(dir, Base.project_names));
                       isempty(files) ? nothing : first(files))
 
-# Where the active environment loads `name` from: its id, package root, entry file, project
-# file, and its extensions' entry files (found in the same order as Base finds them) and
-# trigger packages.
+# Where the active environment loads `name` from: its id and UUID, package root, entry file,
+# project file, and its extensions' entry files (found in the same order as Base finds them)
+# and trigger packages.
 function _locate(name::Symbol)
     id = Base.identify_package(String(name))
     id === nothing && error("DispatchCheckup: package $name is not in the active environment")
+    uuid = id.uuid
+    uuid === nothing && error("DispatchCheckup: package $name has no UUID " *
+                              "(is it a package without a Project.toml?)")
     entry = Base.locate_package(id)
     entry === nothing && error("DispatchCheckup: cannot find the source of $name " *
                                "(does the environment need `Pkg.instantiate()`?)")
     root = dirname(entry)
     while (file = _project_file(root)) === nothing ||
-          get(TOML.parsefile(file), "uuid", "") != string(id.uuid)
+          get(TOML.parsefile(file), "uuid", "") != string(uuid)
         dirname(root) == root && error("DispatchCheckup: no Project.toml of $name above $entry")
         root = dirname(root)
     end
@@ -25,12 +28,12 @@ function _locate(name::Symbol)
     uuids = merge(get(project, "deps", Dict()), get(project, "weakdeps", Dict()))
     exts, triggers = Dict{Base.PkgId,String}(), Dict{Base.PkgId,Vector{Base.PkgId}}()
     for (ext, packages) in get(project, "extensions", Dict())
-        pkg = Base.PkgId(Base.uuid5(id.uuid, ext), ext)
+        pkg = Base.PkgId(Base.uuid5(uuid, ext), ext)
         exts[pkg] = Base.find_ext_path(normpath(dirname(entry), ".."), ext)
         triggers[pkg] = [Base.PkgId(Base.UUID(uuids[n]), n) for n in
                          (packages isa String ? (packages,) : packages)]
     end
-    return (; id, root, entry, file, project, exts, triggers)
+    return (; id, uuid, root, entry, file, project, exts, triggers)
 end
 
 # Each shim requires DispatchCheckup and loads the original file through it. The
@@ -89,10 +92,12 @@ function _write_environment(t, overlay::String, cfg::Config)
     manifest = file === nothing ? Dict{String,Any}() : TOML.parsefile(file)
     haskey(manifest, "manifest_format") || (manifest = Dict("manifest_format" => "2.0", "deps" => manifest))
     deps = get!(Dict{String,Any}, manifest, "deps")
-    for records in values(deps), record in records
-        haskey(record, "path") && (record["path"] = normpath(dirname(file), record["path"]))
+    if file !== nothing  # (otherwise `deps` is empty)
+        for records in values(deps), record in records
+            haskey(record, "path") && (record["path"] = normpath(dirname(file), record["path"]))
+        end
     end
-    records = get!(Vector{Any}, deps, t.id.name)
+    records = get!(Vector{Any}, deps, t.id.name)::Vector{Any}  # (a TOML array of tables)
     index = findfirst(r -> get(r, "uuid", "") == string(t.id.uuid), records)
     record = index === nothing ? push!(records, _record(t))[end] : records[index]
     for key in ("git-tree-sha1", "repo-url", "repo-rev", "repo-subdir", "pinned")
