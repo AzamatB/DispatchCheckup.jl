@@ -200,3 +200,37 @@ The CUDA tests have their own environment and need a GPU:
 julia --project=test/gpu -e 'using Pkg; Pkg.instantiate()'
 DISPATCHCHECKUP_GPU_TESTS=1 julia --project=test/gpu test/runtests.jl test_gpu.jl
 ```
+
+## Compute Sanitizer
+
+`test/test_compute_sanitizer.jl` activates `dispatch_doctor` on the static package in
+`test/sanitizer_fixture` before importing it. It verifies the checked overlay and unchanged
+source bytes, then checks a 259-element tail kernel, a 36-argument kernel, both typed `Val`
+branches (including an empty unused array), and a precisely excluded device override.
+These are valid GPU kernels with numerical assertions; intentional compilation failures
+and subprocess test suites remain in the ordinary tests. The workload requires Julia 1.13
+or later and functional CUDA, and disables scalar GPU indexing.
+
+Prepare the pinned GPU environment and run a baseline outside instrumentation first:
+
+```bash
+julia --startup-file=no --project=test/gpu -e 'using Pkg; Pkg.instantiate()'
+julia -g1 --startup-file=no --check-bounds=auto --project=test/gpu -e 'using CUDA, DispatchCheckup'
+julia -g1 --startup-file=no --check-bounds=auto --depwarn=error --project=test/gpu test/test_compute_sanitizer.jl
+for sanitizer_tool in memcheck initcheck synccheck racecheck; do
+    sanitizer_args=()
+    if [[ "$sanitizer_tool" == initcheck ]]; then
+        sanitizer_args+=(--initcheck-address-space all)
+    elif [[ "$sanitizer_tool" == racecheck ]]; then
+        sanitizer_args+=(--racecheck-num-workers 4 --racecheck-report all)
+    fi
+    compute-sanitizer --tool "$sanitizer_tool" --error-exitcode 86 --launch-timeout 0 \
+        --target-processes all --report-api-errors no --require-cuda-init yes --kill \
+        "${sanitizer_args[@]}" julia -g1 --startup-file=no --check-bounds=auto \
+        --depwarn=error --project=test/gpu test/test_compute_sanitizer.jl || exit "$?"
+done
+```
+
+In the Godela workspace, `../SolverRuntime.jl/scripts/ci/run_compute_sanitizer.jl` records
+the tool output and completion evidence. A clean run covers these checked fixture methods;
+it does not prove sanitizer safety for every package DispatchCheckup can transform.

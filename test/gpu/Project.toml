@@ -1,5 +1,6 @@
 [deps]
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+DCSanitizerFixture = "6cf1d424-70af-4a41-bbc0-5f736a581d38"
 DispatchCheckup = "ca055ede-32eb-4961-937e-82d9c5ec6430"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
@@ -10,4 +11,5 @@ Test = "1"
 julia = "1.13"
 
 [sources]
+DCSanitizerFixture = {path = "../sanitizer_fixture"}
 DispatchCheckup = {path = "../.."}
