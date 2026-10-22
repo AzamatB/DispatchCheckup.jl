@@ -74,22 +74,50 @@ const GPU_BODY = """
     @test only(Array(wide)) == 37.0
     CUDA.@sync @cuda threads=1 DCFixtureGPU.override_kernel!(wide, 3.0, 7.0)
     @test only(Array(wide)) == 21.0
-    typed = CUDA.zeros(Float64, 3)
-    CUDA.@sync @cuda threads=3 DCFixtureGPU.typed_val_kernel!(typed, CUDA.ones(Float64, 3),
-        CUDA.ones(Float64, 6, 3), Int32(3), Val(true))
+    typed, x, offset = CUDA.zeros(Float64, 3), CUDA.ones(Float64, 3), CUDA.ones(Float64, 6, 3)
+    CUDA.@sync @cuda threads=3 DCFixtureGPU.typed_val_kernel!(typed, x, offset, Int32(3), Val(true))
     @test Array(typed) == fill(2.0, 3)
     integers = CuArray(Int32[-2, -1, 0, 1, 2])
     """
+
+# The ordinary and the checked run write the PTX of the kernels above, as `@cuda` compiles
+# them (with their callees, without debug info), to compare them.
+const PTX_DUMPS = """
+    dump_ptx(name, f, args...) = open(joinpath(ENV["DCT_PTX"], "\$name.ptx"), "w") do io
+        types = Tuple{map(Core.Typeof ∘ cudaconvert, args)...}
+        CUDA.code_ptx(io, f, types; kernel = true, dump_module = true)
+    end
+    dump_ptx("stable", DCFixtureGPU.stable_kernel!, output, input)
+    dump_ptx("wide", DCFixtureGPU.wide_kernel!, wide, ntuple(Float64, 36)...)
+    dump_ptx("override", DCFixtureGPU.override_kernel!, wide, 3.0, 7.0)
+    dump_ptx("typed_val", DCFixtureGPU.typed_val_kernel!, typed, x, offset, Int32(3), Val(true))
+    """
+
+# The fixture with one operand of `wide_kernel!` changed, which the comparison must tell
+# from the original.
+const ALTERED = replace(GPU_FIXTURE["src/DCFixtureGPU.jl"],
+                        "module DCFixtureGPU" => "module Altered", "x1 + x36" => "x1 + x35")
+
+# PTX up to what differs between compilations of the same code: the counters that make
+# Julia's symbol names unique (`julia_throw_boundserror_3851`), numbered in order of
+# appearance instead, and LLVM's block names in comments (`// %L39`).
+function normalized_ptx(ptx::String)
+    counters = Dict{SubString{String},Int}()
+    ptx = replace(ptx, r"\bjulia_\w+?_\K\d+(?=(?:_param_\d+)?\b)" =>
+                       c -> string(get!(counters, c, length(counters) + 1)))
+    return replace(ptx, r"\h+// %\S+$"m => "")
+end
 
 # DispatchDoctor applies `CUDA.@device_override` to its inferred copy of the function too,
 # which cannot work, so that definition is excluded by its line.
 const OVERRIDE = findfirst(startswith("CUDA.@device_override"), split(GPU_FIXTURE["src/DCFixtureGPU.jl"], '\n'))
 const UNSTABLE_OVERRIDE = ":override_product => \"src/DCFixtureGPU.jl:$OVERRIDE\""
 
-gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE") = """
+gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", prelude = "") = """
     $(activate ? "" : "# ")import DispatchCheckup
     $(activate ? "" : "# ")DispatchCheckup.dispatch_doctor(:DCFixtureGPU$(isempty(options) ? "" : "; $options"))
     using Test, CUDA, DCFixtureGPU
+    $prelude
     @testset "GPU" begin
     $GPU_BODY
     $body
@@ -113,9 +141,11 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE") = "
                               "DCFixtureGPU" => Dict("path" => package)))))
         resolve(env)
         run_gpu(name, text) = (write(joinpath(env, "$name.jl"), text);
-            julia("--project=$env", joinpath(env, "$name.jl"); dir = env, env = Dict("DCT_ROOT" => package)))
+            julia("--project=$env", joinpath(env, "$name.jl"); dir = env, env = Dict(
+                "DCT_ROOT" => package, "DCT_PTX" => mkpath(joinpath(env, "ptx", name)))))
 
         ordinary = run_gpu("ordinary", gpu_script("""
+            $PTX_DUMPS
             CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
             @test Array(output) == Float32[-2, -1, 0, 1, 2]
             @test !any(id -> id.name == "DispatchDoctor", keys(Base.loaded_modules))
@@ -124,6 +154,8 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE") = "
         @test ordinary.code == 0
 
         checked = run_gpu("checked", gpu_script("""
+            $PTX_DUMPS
+            dump_ptx("altered_wide", Altered.wide_kernel!, wide, ntuple(Float64, 36)...)
             @test_throws DispatchCheckup.DispatchDoctor.TypeInstabilityError DCFixtureGPU.unstable_device(Int32(1))
             # The check's error path is not valid device code, so the kernel fails to compile.
             failure = try
@@ -133,9 +165,18 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE") = "
                 exception
             end
             @test nameof(typeof(failure)) === :InvalidIRError
-            """))
+            """; prelude = ALTERED))
         checked.code == 0 || println(checked.output)
         @test checked.code == 0
+        # Each checked kernel compiles to the PTX of the original one, and the comparison sees
+        # the altered fixture's one-operand change.
+        ptx(path...) = normalized_ptx(read(joinpath(env, "ptx", path...), String))
+        for file in readdir(joinpath(env, "ptx", "ordinary"))
+            @test ptx("checked", file) == ptx("ordinary", file)
+        end
+        altered = split(ptx("checked", "altered_wide.ptx"), '\n')
+        original = split(ptx("ordinary", "wide.ptx"), '\n')
+        @test length(altered) == length(original) && count(altered .!= original) == 1
 
         excluded = run_gpu("excluded", gpu_script("""
             CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
