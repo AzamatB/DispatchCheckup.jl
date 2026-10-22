@@ -194,7 +194,8 @@ throw an `UnanalyzableModuleException`. Run such checks as `original=` files.
 julia --startup-file=no --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-The CUDA tests have their own environment and need a GPU:
+The CUDA tests, which also check that the checked kernels compile to the same PTX as the
+ordinary ones, have their own environment and need a GPU:
 
 ```sh
 julia --project=test/gpu -e 'using Pkg; Pkg.instantiate()'
