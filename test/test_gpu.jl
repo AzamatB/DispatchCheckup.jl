@@ -75,13 +75,15 @@ const GPU_BODY = """
     CUDA.@sync @cuda threads=1 DCFixtureGPU.override_kernel!(wide, 3.0, 7.0)
     @test only(Array(wide)) == 21.0
     typed, x, offset = CUDA.zeros(Float64, 3), CUDA.ones(Float64, 3), CUDA.ones(Float64, 6, 3)
-    CUDA.@sync @cuda threads=3 DCFixtureGPU.typed_val_kernel!(typed, x, offset, Int32(3), Val(true))
+    CUDA.@sync @cuda threads=3 DCFixtureGPU.typed_val_kernel!(typed, x, offset, Int32(3),
+        Val(true))
     @test Array(typed) == fill(2.0, 3)
     integers = CuArray(Int32[-2, -1, 0, 1, 2])
     """
 
 # The ordinary and the checked run write the PTX of the kernels above, as `@cuda` compiles
-# them (with their callees, without debug info), to compare them.
+# them (with their callees, without debug info), to compare them. It is compiled from the
+# argument types alone, so the `Val(false)` specialization needs no launch of its own.
 const PTX_DUMPS = """
     dump_ptx(name, f, args...) = open(joinpath(ENV["DCT_PTX"], "\$name.ptx"), "w") do io
         types = Tuple{map(Core.Typeof ∘ cudaconvert, args)...}
@@ -90,7 +92,10 @@ const PTX_DUMPS = """
     dump_ptx("stable", DCFixtureGPU.stable_kernel!, output, input)
     dump_ptx("wide", DCFixtureGPU.wide_kernel!, wide, ntuple(Float64, 36)...)
     dump_ptx("override", DCFixtureGPU.override_kernel!, wide, 3.0, 7.0)
-    dump_ptx("typed_val", DCFixtureGPU.typed_val_kernel!, typed, x, offset, Int32(3), Val(true))
+    for has_x in (true, false)
+        dump_ptx("typed_val_\$has_x", DCFixtureGPU.typed_val_kernel!, typed, x, offset,
+            Int32(3), Val(has_x))
+    end
     """
 
 # The fixture with one operand of `wide_kernel!` changed, which the comparison must tell
@@ -98,14 +103,24 @@ const PTX_DUMPS = """
 const ALTERED = replace(GPU_FIXTURE["src/DCFixtureGPU.jl"],
                         "module DCFixtureGPU" => "module Altered", "x1 + x36" => "x1 + x35")
 
-# PTX up to what differs between compilations of the same code: the counters that make
-# Julia's symbol names unique (`julia_throw_boundserror_3851`), numbered in order of
-# appearance instead, and LLVM's block names in comments (`// %L39`).
+# The lines of PTX up to what differs between compilations of the same code: the counters
+# that make Julia's symbol names unique (`julia_throw_boundserror_3851`), numbered in order
+# of appearance instead, and LLVM's block names in comments (`// %L39`).
 function normalized_ptx(ptx::String)
     counters = Dict{SubString{String},Int}()
     ptx = replace(ptx, r"\bjulia_\w+?_\K\d+(?=(?:_param_\d+)?\b)" =>
                        c -> string(get!(counters, c, length(counters) + 1)))
-    return replace(ptx, r"\h+// %\S+$"m => "")
+    return split(replace(ptx, r"\h+// %\S+$"m => ""), '\n')
+end
+
+# The first (at most three) lines where two PTX dumps differ once normalized, as
+# (number, line, line), with `nothing` past the end of the shorter one.
+function ptx_differences(a::String, b::String)
+    a_lines, b_lines = normalized_ptx(a), normalized_ptx(b)
+    line(lines, i) = get(lines, i, nothing)
+    differing = Iterators.filter(i -> line(a_lines, i) != line(b_lines, i),
+                                 1:max(length(a_lines), length(b_lines)))
+    return [(i, line(a_lines, i), line(b_lines, i)) for i in Iterators.take(differing, 3)]
 end
 
 # DispatchDoctor applies `CUDA.@device_override` to its inferred copy of the function too,
@@ -170,13 +185,14 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", pre
         @test checked.code == 0
         # Each checked kernel compiles to the PTX of the original one, and the comparison sees
         # the altered fixture's one-operand change.
-        ptx(path...) = normalized_ptx(read(joinpath(env, "ptx", path...), String))
-        for file in readdir(joinpath(env, "ptx", "ordinary"))
-            @test ptx("checked", file) == ptx("ordinary", file)
+        ptx(path...) = read(joinpath(env, "ptx", path...), String)
+        @testset "$file" for file in readdir(joinpath(env, "ptx", "ordinary"))
+            @test isempty(ptx_differences(ptx("checked", file), ptx("ordinary", file)))
         end
-        altered = split(ptx("checked", "altered_wide.ptx"), '\n')
-        original = split(ptx("ordinary", "wide.ptx"), '\n')
-        @test length(altered) == length(original) && count(altered .!= original) == 1
+        @testset let altered = ptx_differences(ptx("checked", "altered_wide.ptx"),
+                                               ptx("ordinary", "wide.ptx"))
+            @test length(altered) == 1
+        end
 
         excluded = run_gpu("excluded", gpu_script("""
             CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
