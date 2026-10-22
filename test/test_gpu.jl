@@ -81,9 +81,10 @@ const GPU_BODY = """
     integers = CuArray(Int32[-2, -1, 0, 1, 2])
     """
 
-# The ordinary and the checked run write the PTX of the kernels above, as `@cuda` compiles
-# them (with their callees, without debug info), to compare them. It is compiled from the
-# argument types alone, so the `Val(false)` specialization needs no launch of its own.
+# The ordinary and the checked run write the PTX of the kernels above, compiled from the
+# argument types as `@cuda` converts them, with their callees and without debug info, to
+# compare them. As only the types are needed, the `Val(false)` specialization needs no launch
+# of its own.
 const PTX_DUMPS = """
     dump_ptx(name, f, args...) = open(joinpath(ENV["DCT_PTX"], "\$name.ptx"), "w") do io
         types = Tuple{map(Core.Typeof ∘ cudaconvert, args)...}
@@ -103,9 +104,11 @@ const PTX_DUMPS = """
 const ALTERED = replace(GPU_FIXTURE["src/DCFixtureGPU.jl"],
                         "module DCFixtureGPU" => "module Altered", "x1 + x36" => "x1 + x35")
 
-# The lines of PTX up to what differs between compilations of the same code: the counters
-# that make Julia's symbol names unique (`julia_throw_boundserror_3851`), numbered in order
-# of appearance instead, and LLVM's block names in comments (`// %L39`).
+# The lines of PTX up to what differs between the checked and the ordinary compilation of a
+# kernel: the counters that make Julia's symbol names unique (`julia_throw_boundserror_3851`),
+# which depend on what the process compiled before, numbered in order of appearance instead,
+# and LLVM's block names in comments (`// %L39`), which Julia takes from IR statement numbers
+# that the check shifts.
 function normalized_ptx(ptx::String)
     counters = Dict{SubString{String},Int}()
     ptx = replace(ptx, r"\bjulia_\w+?_\K\d+(?=(?:_param_\d+)?\b)" =>
@@ -189,9 +192,12 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", pre
         @testset "$file" for file in readdir(joinpath(env, "ptx", "ordinary"))
             @test isempty(ptx_differences(ptx("checked", file), ptx("ordinary", file)))
         end
+        # The altered kernel differs in one line only: it loads x35 (`_param_36`) where the
+        # original loads x36 (`_param_37`).
         @testset let altered = ptx_differences(ptx("checked", "altered_wide.ptx"),
                                                ptx("ordinary", "wide.ptx"))
-            @test length(altered) == 1
+            @test length(altered) == 1 &&
+                  only(altered)[2] == replace(only(altered)[3], "_param_37]" => "_param_36]")
         end
 
         excluded = run_gpu("excluded", gpu_script("""
