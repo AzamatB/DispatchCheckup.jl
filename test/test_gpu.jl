@@ -8,7 +8,7 @@ get(ENV, "DISPATCHCHECKUP_GPU_TESTS", "0") == "1" ||
 
 using CUDA
 isdefined(@__MODULE__, :Fixtures) || include("support.jl")
-using .Fixtures: Fixtures, UUIDS, CHECKUP, write_files, package_project, julia, resolve
+using .Fixtures: CHECKUP, Fixtures, UUIDS, julia, package_project, resolve, write_files
 
 const GPU_FIXTURE = Dict(
     "Project.toml" => package_project("DCFixtureGPU"; deps = Dict("CUDA" => UUIDS["CUDA"])),
@@ -102,9 +102,10 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE") = "
         package = write_files(joinpath(sandbox, "DCFixtureGPU"), GPU_FIXTURE)
         env = joinpath(sandbox, "env")
         # The test/gpu manifest (absolute paths), plus the fixture package.
-        manifest = Fixtures.TOML.parsefile(Base.project_file_manifest_path(Base.active_project()))
+        project = something(Base.active_project())
+        manifest = Fixtures.TOML.parsefile(something(Base.project_file_manifest_path(project)))
         for records in values(manifest["deps"]), record in records
-            haskey(record, "path") && (record["path"] = normpath(dirname(Base.active_project()), record["path"]))
+            haskey(record, "path") && (record["path"] = normpath(dirname(project), record["path"]))
         end
         write_files(env, Dict("Manifest.toml" => manifest, "Project.toml" => Dict(
             "deps" => Dict(n => UUIDS[n] for n in ("CUDA", "DispatchCheckup", "Test", "DCFixtureGPU")),
