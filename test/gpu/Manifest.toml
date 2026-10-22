@@ -186,7 +186,7 @@ version = "1.11.0"
 deps = ["DispatchDoctor", "MacroTools", "TOML"]
 path = "../.."
 uuid = "ca055ede-32eb-4961-937e-82d9c5ec6430"
-version = "0.2.0"
+version = "0.2.1"
 
 [[deps.DispatchDoctor]]
 deps = ["MacroTools", "Preferences"]
