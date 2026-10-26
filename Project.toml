@@ -10,7 +10,7 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
 DispatchDoctor = {url = "https://github.com/AzamatB/DispatchDoctor.jl", rev = "f598693d0ee9a5a4d82a36289fb0191a0b4d7bb9"}
-Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "82bb82d6e1fb57ce74cf34191ce35eb1fc240032"}
+Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "9c91dd18c4ca95c6dc7ee81a5f1bf40458130fa4"}
 CheckConcreteStructs = {url = "https://github.com/AzamatB/CheckConcreteStructs.jl.git", rev = "fb7bc8dbdf71ce30f398d0c3f7b95e96a0210125"}
 
 [compat]
