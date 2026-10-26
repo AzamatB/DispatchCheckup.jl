@@ -48,7 +48,7 @@ const USES_DOCTOR = Dict(
         """)
 
 # Run `julia args...` in `dir` with a clean load path; return the exit code and output.
-function julia(args...; dir::String, env = Dict{String,String}(), timeout = 1200)
+function julia(args...; dir::String, env = Dict{String,String}(), timeout = 600)
     variables = filter(p -> !startswith(first(p), "DISPATCH_CHECKUP") &&
                             first(p) ∉ ("JULIA_PROJECT", "JULIA_LOAD_PATH"), copy(ENV))
     merge!(variables, Dict("JULIA_LOAD_PATH" => "@:@stdlib", "JULIA_PKG_PRECOMPILE_AUTO" => "0"), env)

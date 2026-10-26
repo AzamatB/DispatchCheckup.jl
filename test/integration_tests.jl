@@ -205,8 +205,8 @@ end
 if (try mkdir(sandbox); true catch e; e isa Base.IOError || rethrow(); false end)
     try make_sandbox() catch; touch(failed); rethrow() end
 else
-    timedwait(() -> isfile(made) || isfile(failed), 1200.0; pollint = 0.5) === :ok && isfile(made) ||
-        error("the worker that makes the fixture packages failed (see its first item) or took longer than 20 minutes")
+    timedwait(() -> isfile(made) || isfile(failed), 600.0; pollint = 0.5) === :ok && isfile(made) ||
+        error("the worker that makes the fixture packages failed (see its first item) or took longer than 10 minutes")
 end
 const before = Dict(path => parse(UInt64, h) for (path, h) in Fixtures.TOML.parsefile(made))
 
