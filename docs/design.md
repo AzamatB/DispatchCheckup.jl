@@ -98,25 +98,35 @@ every included file):
 
 They run in one fresh Julia process with the environment, load path, depot path, active
 project and working directory from before activation (the `DISPATCH_CHECKUP*` variables
-removed; variables that the suite sets later do not reach it), with the same command-line
-flags and threads, and the test process's color setting. Activation starts it as its last step, so it runs alongside the checked suite:
-both are mostly single-threaded, and the run takes about as long as the longer of the two
-instead of their sum. Its stdout and stderr go to one file. The `atexit` hook waits for it,
-prints that file after the suite's output, in one block, and makes the exit status the
-first nonzero one of the suite, the checks and the process (128 plus the signal, if a
-signal killed it). A process that cannot start makes `dispatch_doctor` throw; an error
-while waiting for it, or while printing its output, fails the run.
+removed), with the same command-line flags and threads. Activation starts it as its last
+step, so it runs alongside the checked suite: both are mostly single-threaded, and the run
+takes about as long as the longer of the two instead of their sum. It takes the environment
+as it is at activation (variables that the suite sets later do not reach it) and the test
+process's color setting (`get(stdout, :color, false)`), as its stdout and stderr go to one
+file. Its first lines make both line-buffered: Julia writes a file through an IOStream,
+which buffers by block, so a process killed by a signal (a native fault, the OOM killer)
+would lose what it printed last; line-buffered, it keeps every complete line. The `atexit`
+hook waits for it, prints that file after the suite's output, in one block, and makes the
+exit status the first nonzero one of the suite, the checks and the process (128 plus the
+signal, if a signal killed it). A process that cannot start makes `dispatch_doctor` throw;
+an error while waiting for it, or while printing its output, fails the run (an error while
+waiting prints the file first).
 
 A suite killed by a signal (Julia then runs the exit hooks with code 128, in a state where
 waiting for a process or writing to a stream can hang) kills the process at once instead,
-with `SIGKILL` sent by its process id, and leaves the exit status alone. A suite killed
-with `SIGKILL` runs no hook, so the process then runs on until its files end.
+with `SIGKILL` sent by its process id, and leaves the exit status alone. On Linux, the
+process also asks the kernel to send it `SIGKILL` when the test process dies
+(`PR_SET_PDEATHSIG`), and ends at once if the test process is already gone. That covers
+the cases no hook can: a suite killed with `SIGKILL`, and a signal that comes while the
+hook is already waiting for the process (Julia runs each hook once). Elsewhere, the process
+then runs on until its files end.
 
 The two processes share the machine, the GPU included. With `concurrent = false`, the hook
-starts the process instead, once the suite is done, with the test process's stdout and
-stderr, for a suite that must have the machine to itself: GodelaAMGX's suite fills its GPU
-to 64 MiB short of full for about a second to make AMGX run out of memory, while its guard
-files build an AMGX solver on the GPU and solve with it, so either could fail the other.
+starts the process instead, once the suite is done, as DispatchCheckup 0.2.1 did: with the
+environment as it is then and the test process's stdout and stderr. That is for a suite
+that must have the machine to itself: GodelaAMGX's suite fills its GPU to 64 MiB short of
+full for about a second to make AMGX run out of memory, while its guard files build an
+AMGX solver on the GPU and solve with it, so either could fail the other.
 
 ## The DispatchDoctor fork
 

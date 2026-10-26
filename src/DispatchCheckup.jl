@@ -24,9 +24,11 @@ struct Activation
     config::Config
     shims::Dict{Base.PkgId,String}              # the package and its extensions => shim
     triggers::Dict{Base.PkgId,Vector{Base.PkgId}}  # extension => packages that load it
-    original::Vector{String}                    # guard files
+    original::Vector{String}                    # guard files (built here, not the caller's)
     concurrent::Bool
-    command::Cmd                                # the guard process, as before activation
+    project::Union{Nothing,String}              # the active project, variables and directory
+    variables::Dict{String,Union{Nothing,String}}  # from before activation
+    directory::String
     guard::Union{Nothing,Guard}                 # started at activation (when concurrent)
     loaded::Set{Base.PkgId}                     # loaded from their shims
     failures::Vector{String}
@@ -50,10 +52,12 @@ written inside `@stable`. Call it before the package is loaded, at the top of
   `:foo => "src/file.jl:LINE"` (the definition of `foo` starting at that line). Every entry
   must match a definition in the package's sources.
 - `original`: test files (relative to the calling file) to run in one fresh Julia process
-  with the original, unchecked package. The process starts at once and runs alongside the
-  suite; at exit, its output follows the suite's, in one block, and its failures fail the run.
-- `concurrent`: `false` runs the `original` files after the suite instead, for a suite that
-  must have the machine to itself while it runs (one that fills the GPU's memory, say).
+  with the original, unchecked package. The process starts at once, with the environment as
+  it is then, and runs alongside the suite; at exit, its output follows the suite's, in one
+  block, and its failures fail the run.
+- `concurrent`: `false` runs the `original` files after the suite instead, with the
+  environment as it is then, for a suite that must have the machine to itself while it runs
+  (one that fills the GPU's memory, say).
 - `mode`: DispatchDoctor's `default_mode`, `"error"` or `"warn"`.
 - `union_limit`: DispatchDoctor's `default_union_limit`.
 
@@ -116,11 +120,14 @@ function _activate(pkg::Symbol, exclusions::Vector{Exclusion}, guards::Vector{St
 
     _check_options(t.uuid, cfg)  # check (2), for the package that is not loaded yet
 
-    command = _original_command(guards, project, variables, directory)
-    guard = concurrent && !isempty(guards) ? _start_original(command) : nothing
+    # Concurrent: the guard process starts now, with the environment as it is now (and the
+    # color setting of this process's stdout, as its own goes to a file).
+    guard = !concurrent || isempty(guards) ? nothing :
+        _start_original(_original_command(guards, project, variables, directory,
+                                          get(stdout, :color, false)::Bool))
     CONFIG[] = cfg
-    ACTIVE[] = Activation(cfg, shims, t.triggers, guards, concurrent, command, guard,
-                          Set{Base.PkgId}(), String[])
+    ACTIVE[] = Activation(cfg, shims, t.triggers, guards, concurrent, project, variables,
+                          directory, guard, Set{Base.PkgId}(), String[])
     push!(Base.package_callbacks, _check_loaded)
     atexit(_finish)
     return nothing
@@ -174,8 +181,8 @@ function _finish(code::Integer)
         printstyled(stderr, "DispatchCheckup: ", failure, "\n"; color = :red, bold = true)
     end
     isempty(a.failures) || status != 0 || (status = 1)
-    if code < 128 && !isempty(a.original)  # (not when killed by a signal)
-        guards = a.guard === nothing ? _run_original(a.command) : _join(a.guard)
+    if code < 128  # (not when killed by a signal)
+        guards = a.guard !== nothing ? _join(a.guard) : isempty(a.original) ? 0 : _run_original(a)
         status == 0 && (status = guards)
     end
     status == code || exit(status)
@@ -184,11 +191,24 @@ end
 
 # The guard files run in one fresh, ordinary Julia process, as before activation: with the
 # environment, load path, depot path, project and working directory from before, and the
-# same command-line flags and threads.
+# same command-line flags and threads (and `--color` when `color` is a Bool). On Linux, the
+# kernel kills it when this process dies (PR_SET_PDEATHSIG), however that happens; if this
+# process is already gone, it ends at once. Its stdout and stderr are made line-buffered
+# when they are files (IOStream buffers a file by block), so that a crash keeps what it
+# printed.
 function _original_command(files::Vector{String}, project::Union{Nothing,String},
-                           variables::Dict{String,Union{Nothing,String}}, directory::String)
+                           variables::Dict{String,Union{Nothing,String}}, directory::String,
+                           color::Union{Nothing,Bool})
+    parent = !Sys.islinux() ? "" : """
+        ccall(:prctl, Cint, (Cint, Culong...), 1, 9)  # PR_SET_PDEATHSIG, SIGKILL
+        ccall(:getppid, Cint, ()) == $(getpid()) || exit(137)
+        """
     code = """
         module DispatchCheckupOriginal
+        $(parent)for io in (stdout, stderr)
+            s = io isa IOContext ? io.io : io  # (--color=yes wraps a file in an IOContext)
+            s isa IOStream && ccall(:ios_bufmode, Cint, (Ptr{Cvoid}, Cint), s.ios, 1001)  # bm_line
+        end
         const Test = Base.require(Base.PkgId(Base.UUID("8dfed614-e22c-5e08-85e1-65c5234f0b40"), "Test"))
         Test.@testset "DispatchCheckup original=" begin
             for file in $(repr(files))
@@ -204,7 +224,7 @@ function _original_command(files::Vector{String}, project::Union{Nothing,String}
         v === nothing ? delete!(environment, k) : (environment[k] = v)
     end
     threads = "--threads=$(Threads.nthreads(:default)),$(Threads.nthreads(:interactive))"
-    color = "--color=$(something(Base.have_color, false) ? "yes" : "no")"  # (as this process)
+    color = color === nothing ? String[] : ["--color=$(color ? "yes" : "no")"]
     project = project === nothing ? String[] : ["--project=$project"]
     command = `$(Base.julia_cmd()) $threads $color $project -e $code`
     return ignorestatus(setenv(command, environment; dir = directory))
@@ -223,21 +243,30 @@ function _start_original(command::Cmd)
     return Guard(process, getpid(process), log)
 end
 
-# Wait for the guard process, then show its output in one block. Any error here fails the run.
+# Wait for the guard process, then show its output in one block. Any error here fails the
+# run, after showing what the process printed (if it was not being shown already).
 function _join(guard::Guard)
+    shown = false
     try
         wait(guard.process)
-        flush(stdout), flush(stderr)
-        open(io -> write(stdout, io), guard.log)
-        flush(stdout)
+        shown = true
+        _show(guard.log)
         rm(guard.log; force = true)
         return _status(guard.process)
     catch e
         _stop(guard)
+        shown || try _show(guard.log); rm(guard.log; force = true) catch end
         printstyled(stderr, "DispatchCheckup: the original= process failed: ", sprint(showerror, e),
                     "\n"; color = :red, bold = true)
         return 1
     end
+end
+
+function _show(log::String)
+    flush(stdout), flush(stderr)
+    open(io -> write(stdout, io), log)
+    flush(stdout)
+    return nothing
 end
 
 # Kill the guard process, with no waiting and (but on Windows) no lock: SIGKILL by its id.
@@ -248,9 +277,11 @@ function _stop(guard::Guard)
     return nothing
 end
 
-# Run the guard files after the suite (not concurrent), with this process's stdout and stderr.
-function _run_original(command::Cmd)
+# Run the guard files after the suite (not concurrent), with this process's stdout and
+# stderr and the environment as it is at exit (as DispatchCheckup 0.2.1 did).
+function _run_original(a::Activation)
     try
+        command = _original_command(a.original, a.project, a.variables, a.directory, nothing)
         flush(stdout), flush(stderr)
         return _status(run(command))
     catch e
@@ -267,7 +298,7 @@ precompile(_activate, (Symbol, Vector{Exclusion}, Vector{String}, Bool, String, 
 precompile(_check_loaded, (Base.PkgId,))
 precompile(_finish, (Int32,))
 precompile(_join, (Guard,))
-precompile(_run_original, (Cmd,))
+precompile(_run_original, (Activation,))
 ccall(:jl_generating_output, Cint, ()) == 1 &&  # (scanning our own sources)
     _check_matches(@__DIR__, [joinpath(@__DIR__, "DispatchCheckup.jl")], Exclusion[])
 

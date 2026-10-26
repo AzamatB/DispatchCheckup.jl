@@ -92,11 +92,14 @@ DispatchCheckup sets them as the package's preferences for the run, so that a
 
 `original` lists test files that must see the ordinary package, such as JET or
 allocation checks. They run in one fresh Julia process with the original environment and
-package, which `dispatch_doctor` starts at once, so that it runs alongside the suite. At
-exit, the run waits for it and prints its output (stdout and stderr, kept in a file
-meanwhile) after the suite's, in one block. The exit status is the first nonzero one of the
-suite, DispatchCheckup's checks and that process, so its failures fail the run; if the
-suite is killed by a signal, the process is killed too. Skip the files in the checked suite:
+package, which `dispatch_doctor` starts at once (with the environment as it is then), so
+that it runs alongside the suite. At exit, the run waits for it and prints its output
+(stdout and stderr, kept in a file meanwhile) after the suite's, in one block. The exit
+status is the first nonzero one of the suite, DispatchCheckup's checks and that process, so
+its failures fail the run. If the suite is killed by a signal, the process is killed too:
+on Linux, whatever the signal and whenever it comes; elsewhere, not when the signal is
+`SIGKILL` or comes while the run is already waiting for the process. Skip the files in the
+checked suite:
 
 ```julia
 DispatchCheckup.dispatch_doctor(:MyPackage; original = "test_guards.jl")
@@ -106,8 +109,9 @@ get(ENV, "DISPATCH_CHECKUP", "") == "checked" || include("test_guards.jl")
 ```
 
 With `concurrent = false`, the files run after the suite instead, with their output as it
-comes, for a suite that must have the machine to itself while it runs: one that fills the
-GPU's memory for a moment, say, while its guard files use the GPU too.
+comes and the environment as it is then, for a suite that must have the machine to itself
+while it runs: one that fills the GPU's memory for a moment, say, while its guard files use
+the GPU too.
 
 The guard files run with every checked run, so a suite that runs subsets should build the
 `original=` list from its own selection (for example,
