@@ -64,6 +64,12 @@ function julia(args...; dir::String, env = Dict{String,String}(), timeout = 1200
     return (; code = process.exitcode, output)
 end
 
+# A depot path with a depot of its own (`dir`) first. What the Julia processes that get it
+# compile, and the overlays they write, stay in it, so checked runs of one package whose
+# options differ but whose preferences are the same, which would otherwise take turns writing
+# one package-image file, run side by side.
+depot_path(dir::String) = join([mkpath(dir); DEPOT_PATH], Sys.iswindows() ? ';' : ':')
+
 # Resolve `project` (a directory) with Pkg, in a separate process.
 function resolve(project::String; code = "Pkg.resolve()")
     result = julia("--project=$project", "-e", "using Pkg; $code"; dir = project)

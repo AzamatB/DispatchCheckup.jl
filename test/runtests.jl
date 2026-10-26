@@ -1,12 +1,16 @@
 using Test
 
-const TEST_FILES = ["test_transform.jl", "test_integration.jl", "test_layouts.jl", "test_aqua.jl",
-                    "test_check_concrete_structs.jl", "test_gpu.jl"]
-const DEFAULT_TEST_FILES = get(ENV, "DISPATCHCHECKUP_GPU_TESTS", "0") == "1" ?
-    TEST_FILES : filter(!=("test_gpu.jl"), TEST_FILES)
-const TEST_SELECTED = isempty(ARGS) ? DEFAULT_TEST_FILES : ARGS
-all(in(TEST_FILES), TEST_SELECTED) || error("Unknown test selection: $ARGS")
+# `Pkg.test(test_args = ["test_gpu.jl"])` runs a selection. The files mostly wait for Julia
+# processes of their own, so they run side by side, those that start processes first.
+const TEST_FILES = ["test_integration.jl", "test_gpu.jl", "test_layouts.jl", "test_transform.jl",
+                    "test_quality.jl"]
+const SELECTED = isempty(ARGS) ? TEST_FILES : ARGS
+all(in(TEST_FILES), SELECTED) || error("Unknown test selection: $ARGS")
 
-for file in TEST_SELECTED
-    include(file)
+include(joinpath(@__DIR__, "support.jl"))
+
+@testset "DispatchCheckup" begin
+    @sync for file in SELECTED
+        @async @testset "$file" include(joinpath(@__DIR__, file))
+    end
 end

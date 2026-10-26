@@ -1,13 +1,5 @@
-# Manual tier: checked runs of a CUDA package (needs a GPU and the test/gpu environment):
-#   julia --project=test/gpu -e 'using Pkg; Pkg.instantiate()'
-#   DISPATCHCHECKUP_GPU_TESTS=1 julia --project=test/gpu test/runtests.jl test_gpu.jl
+# Checked runs of a CUDA package, in Julia processes that need a GPU: a missing GPU fails.
 using Test
-
-get(ENV, "DISPATCHCHECKUP_GPU_TESTS", "0") == "1" ||
-    error("the CUDA tests need DISPATCHCHECKUP_GPU_TESTS=1 and the test/gpu environment")
-
-using CUDA
-isdefined(@__MODULE__, :Fixtures) || include("support.jl")
 using .Fixtures: CHECKUP, Fixtures, UUIDS, julia, package_project, resolve, write_files
 
 const GPU_FIXTURE = Dict(
@@ -143,11 +135,10 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", pre
     """
 
 @testset "DispatchCheckup with CUDA" begin
-    @test CUDA.functional()
     mktempdir() do sandbox
         package = write_files(joinpath(sandbox, "DCFixtureGPU"), GPU_FIXTURE)
         env = joinpath(sandbox, "env")
-        # The test/gpu manifest (absolute paths), plus the fixture package.
+        # The test environment's manifest (absolute paths), plus the fixture package.
         project = something(Base.active_project())
         manifest = Fixtures.TOML.parsefile(something(Base.project_file_manifest_path(project)))
         for records in values(manifest["deps"]), record in records
@@ -158,20 +149,19 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", pre
             "sources" => Dict("DispatchCheckup" => Dict("path" => CHECKUP),
                               "DCFixtureGPU" => Dict("path" => package)))))
         resolve(env)
-        run_gpu(name, text) = (write(joinpath(env, "$name.jl"), text);
+        # The three runs go side by side, the checked ones in depots of their own.
+        run_gpu(name, text; depot = nothing) = (write(joinpath(env, "$name.jl"), text);
             julia("--project=$env", joinpath(env, "$name.jl"); dir = env, env = Dict(
-                "DCT_ROOT" => package, "DCT_PTX" => mkpath(joinpath(env, "ptx", name)))))
+                "DCT_ROOT" => package, "DCT_PTX" => mkpath(joinpath(env, "ptx", name)),
+                (depot === nothing ? () : ("JULIA_DEPOT_PATH" => Fixtures.depot_path(depot),))...)))
 
-        ordinary = run_gpu("ordinary", gpu_script("""
+        ordinary = @async run_gpu("ordinary", gpu_script("""
             $PTX_DUMPS
             CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
             @test Array(output) == Float32[-2, -1, 0, 1, 2]
             @test !any(id -> id.name == "DispatchDoctor", keys(Base.loaded_modules))
             """; activate = false))
-        ordinary.code == 0 || println(ordinary.output)
-        @test ordinary.code == 0
-
-        checked = run_gpu("checked", gpu_script("""
+        checked = @async run_gpu("checked", depot = joinpath(sandbox, "depots", "checked"), gpu_script("""
             $PTX_DUMPS
             dump_ptx("altered_wide", Altered.wide_kernel!, wide, ntuple(Float64, 36)...)
             @test_throws DispatchCheckup.DispatchDoctor.TypeInstabilityError DCFixtureGPU.unstable_device(Int32(1))
@@ -184,8 +174,16 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", pre
             end
             @test nameof(typeof(failure)) === :InvalidIRError
             """; prelude = ALTERED))
-        checked.code == 0 || println(checked.output)
-        @test checked.code == 0
+        excluded = @async run_gpu("excluded", depot = joinpath(sandbox, "depots", "excluded"), gpu_script("""
+            CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
+            @test Array(output) == Float32[-2, -1, 0, 1, 2]
+            @test DCFixtureGPU.unstable_device(Int32(1)) === Int32(1)
+            """; options = "unstable = (:unstable_device, $UNSTABLE_OVERRIDE)"))
+        ordinary, checked, excluded = fetch.((ordinary, checked, excluded))
+        for result in (ordinary, checked, excluded)
+            result.code == 0 || println(result.output)
+            @test result.code == 0
+        end
         # Each checked kernel compiles to the PTX of the original one, and the comparison sees
         # the altered fixture's one-operand change.
         ptx(path...) = read(joinpath(env, "ptx", path...), String)
@@ -199,15 +197,6 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", pre
             @test length(altered) == 1 &&
                   only(altered)[2] == replace(only(altered)[3], "_param_37]" => "_param_36]")
         end
-
-        excluded = run_gpu("excluded", gpu_script("""
-            CUDA.@sync @cuda threads=32 DCFixtureGPU.unstable_kernel!(output, integers)
-            @test Array(output) == Float32[-2, -1, 0, 1, 2]
-            @test DCFixtureGPU.unstable_device(Int32(1)) === Int32(1)
-            """; options = "unstable = (:unstable_device, $UNSTABLE_OVERRIDE)"))
-        excluded.code == 0 || println(excluded.output)
-        @test excluded.code == 0
-        @info "CUDA fixture results" ordinary.code checked.code excluded.code
         Fixtures.remove_overlays("DCFixtureGPU")
     end
 end
