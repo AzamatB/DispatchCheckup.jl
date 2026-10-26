@@ -102,10 +102,10 @@ on Linux, whatever the signal and whenever it comes; elsewhere, not when the sig
 checked suite:
 
 ```julia
-DispatchCheckup.dispatch_doctor(:MyPackage; original = "test_guards.jl")
+DispatchCheckup.dispatch_doctor(:MyPackage; original = "guards.jl")
 using Test, MyPackage
 # ...
-get(ENV, "DISPATCH_CHECKUP", "") == "checked" || include("test_guards.jl")
+get(ENV, "DISPATCH_CHECKUP", "") == "checked" || include("guards.jl")
 ```
 
 With `concurrent = false`, the files run after the suite instead, with their output as it
@@ -115,7 +115,7 @@ the GPU too.
 
 The guard files run with every checked run, so a suite that runs subsets should build the
 `original=` list from its own selection (for example,
-`original = "test_guards.jl" in selected ? ("test_guards.jl",) : ()`). The paths are
+`original = "guards.jl" in selected ? ("guards.jl",) : ()`). The paths are
 relative to the file that calls `dispatch_doctor`. `DISPATCH_CHECKUP` is `"checked"`
 during a checked run, and in the Julia processes it starts: those load the checked package
 too, ReTestItems' workers among them. A process that calls `dispatch_doctor` itself (a test
@@ -205,10 +205,10 @@ throw an `UnanalyzableModuleException`. Run such checks as `original=` files.
 
 ```sh
 julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test()'
-julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test(test_args = ["gpu_tests.jl"])'
+julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test(test_args = ["gpu_test.jl"])'
 ```
 
-The test items of `test/*_tests.jl` run on [ReTestItems](https://github.com/JuliaTesting/ReTestItems.jl)
+The test items of `test/*_test.jl` run on [ReTestItems](https://github.com/JuliaTesting/ReTestItems.jl)
 worker processes; `test_args` names the files whose items run. The suite needs a GPU: its CUDA
 tests also check that the checked kernels compile to the same PTX as the ordinary ones. GitHub's
 hosted runners have none, so the repository has no CI workflow: run the suite on a machine with

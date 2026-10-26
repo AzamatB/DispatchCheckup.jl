@@ -1,6 +1,6 @@
-# DispatchCheckup's suite: the test items of test/*_tests.jl, run by ReTestItems on NWORKERS worker processes. Most
+# DispatchCheckup's suite: the test items of test/*_test.jl, run by ReTestItems on NWORKERS worker processes. Most
 # items wait for Julia processes of their own: checked runs of generated fixture packages, Pkg.test of fixture
-# packages and runs on the GPU (a missing or broken device fails the run). `Pkg.test(test_args = ["gpu_tests.jl"])`
+# packages and runs on the GPU (a missing or broken device fails the run). `Pkg.test(test_args = ["gpu_test.jl"])`
 # runs the items of the files it names. DispatchCheckup does not check its own suite with `dispatch_doctor` (its
 # fixture packages are what it checks), so there is no checked run here and no original= file.
 using DispatchCheckup, ReTestItems
@@ -22,8 +22,8 @@ const WORKER_CHECKS = :(let checked = Main.MAIN_DISPATCH_CHECKUP == "checked"
     @test isdefined(DispatchCheckup, Symbol("#DispatchCheckup")) == checked
 end)
 paths = isempty(ARGS) ? [@__DIR__] : [joinpath(@__DIR__, f) for f in ARGS]
-# The workers get the main process's flags and package, to check (workers_tests.jl), and a scratch directory that
-# outlives them, for what their items share (integration_tests.jl, original_tests.jl). The longest item takes 70-100 s;
+# The workers get the main process's flags and package, to check (workers_test.jl), and a scratch directory that
+# outlives them, for what their items share (integration_test.jl, original_test.jl). The longest item takes 70-100 s;
 # a fixture process that hangs is stopped after 600 s, with its output (support.jl), before the item's 900 s are up.
 ReTestItems.runtests(paths...; nworkers = NWORKERS, nworker_threads = 1, retries = 0, testitem_timeout = 900,
                      validate_paths = true, test_end_expr = Expr(:block, WRITE_COVERAGE, WORKER_CHECKS),

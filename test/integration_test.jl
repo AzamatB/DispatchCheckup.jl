@@ -383,7 +383,7 @@ end
             println("DCT_MAIN ", getpid())
             ReTestItems.runtests(@__DIR__; nworkers = 1, nworker_threads = 1)
             """,
-        "test/worker_tests.jl" => """
+        "test/worker_test.jl" => """
             @testitem "the worker" begin
                 import DispatchCheckup
                 using DCFixture
