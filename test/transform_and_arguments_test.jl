@@ -1,6 +1,6 @@
-# The unstable= matcher, the include rewriting and argument checks, in this process
+# The unstable= matcher, the include rewriting and argument checks, in the worker's process
 # (nothing here activates DispatchCheckup).
-using Test
+@testsetup module Transform
 import DispatchCheckup
 const DC = DispatchCheckup
 
@@ -9,7 +9,10 @@ definition(code; modpath = "M", root = "/pkg") =
 
 excluded(entry, code; kws...) = DC._excludes(only(DC._exclusions(entry)), definition(code; kws...))
 
-@testset "unstable= entries" begin
+export DC, definition, excluded
+end
+
+@testitem "unstable= entries" setup = [Transform] begin
     @test length(DC._exclusions(:foo)) == 1
     @test length(DC._exclusions(:foo => "src/M.jl:3")) == 1
     @test length(DC._exclusions([:foo, :bar])) == 2
@@ -23,7 +26,7 @@ excluded(entry, code; kws...) = DC._excludes(only(DC._exclusions(entry)), defini
     @test_throws ArgumentError DC._exclusions(:foo => "src/M.jl")
 end
 
-@testset "definitions" begin
+@testitem "definitions" setup = [Transform] begin
     d = something(definition("Base.getindex(x::T, i) where {T} = 1"))
     @test (d.written, d.final, d.file, d.line) == ("Base.getindex", "getindex", normpath("src/M.jl"), 1)
     @test something(definition("function Base.:+(a, b)\n a\nend")).written == "Base.+"
@@ -41,7 +44,7 @@ end
                                    "M", "/pkg")).final == "f"
 end
 
-@testset "matching" begin
+@testitem "matching" setup = [Transform] begin
     @test excluded(:foo, "foo(x) = 1")
     @test excluded(:foo, "M.foo(x) = 1")
     @test !excluded(:foo, "foobar(x) = 1")
@@ -60,7 +63,7 @@ end
     @test !excluded(Symbol("Base.:+"), "Base.:-(a, b) = 1")
 end
 
-@testset "include calls" begin
+@testitem "include calls" setup = [Transform] begin
     call(code) = DC._include_call(Meta.parse(code))
     @test something(call("include(\"a.jl\")"))[[1, 3]] == (identity, "a.jl")
     @test something(call("include(f, \"a.jl\")"))[[1, 3]] == (:f, "a.jl")
@@ -89,7 +92,7 @@ end
     @test DC._modpath(Meta.parse("parentmodule(@__MODULE__)"), "M.Sub") === nothing
 end
 
-@testset "the static scan" begin
+@testitem "the static scan" setup = [Transform] begin
     mktempdir() do root
         mkpath(joinpath(root, "src"))
         write(joinpath(root, "src", "M.jl"), """
@@ -133,7 +136,7 @@ end
     end
 end
 
-@testset "check (2) sees the package's preferences" begin
+@testitem "check (2) sees the package's preferences" setup = [Transform] begin
     mktempdir() do dir
         uuid = Base.UUID("6f1d3c34-6b1a-4c39-9a38-2c0d2ad0e0a1")
         write(joinpath(dir, "Project.toml"), "[deps]\nDCPrefs = \"$uuid\"\n")
@@ -151,7 +154,7 @@ end
     end
 end
 
-@testset "arguments are checked before anything changes" begin
+@testitem "arguments are checked before anything changes" setup = [Transform] begin
     load_path = copy(LOAD_PATH)
     @test_throws ArgumentError DC.dispatch_doctor(:Test; mode = "disable")
     @test_throws ArgumentError DC.dispatch_doctor(:Test; union_limit = 0)

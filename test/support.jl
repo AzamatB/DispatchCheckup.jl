@@ -20,7 +20,8 @@ const UUIDS = Dict("DispatchCheckup" => "ca055ede-32eb-4961-937e-82d9c5ec6430",
                    "DCFixtureGPU" => "6689c958-80c0-4aa5-a751-21295d56c2ee",
                    "DCUsesDoctor" => "0f021db6-fcf7-4914-a5c7-94b770dab57c",
                    "DCAllowUnstable" => "710ae0fb-4f09-48f0-9a9f-d98297e6d158",
-                   "CUDA" => "052768ef-5323-5732-b1bb-66c8b64840ba")
+                   "CUDA" => "052768ef-5323-5732-b1bb-66c8b64840ba",
+                   "ReTestItems" => "817f1d60-ba6b-4fd5-9520-3cf149f6a823")
 
 function write_files(root::String, files)
     for (path, content) in files
@@ -47,7 +48,7 @@ const USES_DOCTOR = Dict(
         """)
 
 # Run `julia args...` in `dir` with a clean load path; return the exit code and output.
-function julia(args...; dir::String, env = Dict{String,String}(), timeout = 1200)
+function julia(args...; dir::String, env = Dict{String,String}(), timeout = 600)
     variables = filter(p -> !startswith(first(p), "DISPATCH_CHECKUP") &&
                             first(p) ∉ ("JULIA_PROJECT", "JULIA_LOAD_PATH"), copy(ENV))
     merge!(variables, Dict("JULIA_LOAD_PATH" => "@:@stdlib", "JULIA_PKG_PRECOMPILE_AUTO" => "0"), env)
@@ -63,6 +64,12 @@ function julia(args...; dir::String, env = Dict{String,String}(), timeout = 1200
     rm(log)
     return (; code = process.exitcode, output)
 end
+
+# A depot path with a depot of its own (`dir`) first. What the Julia processes that get it
+# compile, and the overlays they write, stay in it, so checked runs of one package whose
+# options differ but whose preferences are the same, which would otherwise take turns writing
+# one package-image file, run side by side.
+depot_path(dir::String) = join([mkpath(dir); DEPOT_PATH], Sys.iswindows() ? ';' : ':')
 
 # Resolve `project` (a directory) with Pkg, in a separate process.
 function resolve(project::String; code = "Pkg.resolve()")
