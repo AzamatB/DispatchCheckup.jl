@@ -71,10 +71,12 @@ const SCRIPTS = Dict(
         println("DCT_CRASH_OUT 2")
         ccall(:abort, Cvoid, ())
         """,
-    # A suite killed by a signal kills the guard process instead of waiting for it.
+    # A suite killed by a signal kills the guard process instead of waiting for it. The signal comes from another
+    # process, once the suite sleeps: Julia's exit after a SIGTERM that comes while thread 0 compiles (the next
+    # statement, if the suite signals itself) can get stuck before the exit hooks run, and the suite then lives on.
     "suite_killed.jl" => activation("original = \"guard_beat.jl\"") * """
         await("beat") || exit(7)
-        ccall(:kill, Cint, (Cint, Cint), getpid(), Base.SIGTERM)
+        run(`sh -c "sleep 3; kill -TERM \$(getpid())"`; wait = false)
         sleep(60)
         """,
     # On Linux, so does a suite killed with SIGKILL, which runs no exit hook.
