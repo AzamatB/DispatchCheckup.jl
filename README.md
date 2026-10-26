@@ -210,4 +210,6 @@ julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test(test
 
 The test items of `test/*_tests.jl` run on [ReTestItems](https://github.com/JuliaTesting/ReTestItems.jl)
 worker processes; `test_args` names the files whose items run. The suite needs a GPU: its CUDA
-tests also check that the checked kernels compile to the same PTX as the ordinary ones.
+tests also check that the checked kernels compile to the same PTX as the ordinary ones. GitHub's
+hosted runners have none, so the repository has no CI workflow: run the suite on a machine with
+a GPU before merging.
