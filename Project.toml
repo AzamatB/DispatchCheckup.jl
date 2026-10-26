@@ -21,13 +21,15 @@ julia = "1.13"
 Aqua = "1"
 CUDA = "6.4.2"
 CheckConcreteStructs = "0.1"
+ReTestItems = "1.35"
 Test = "1"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CheckConcreteStructs = "73c92db5-9da6-4938-911a-6443a7e94a58"
+ReTestItems = "817f1d60-ba6b-4fd5-9520-3cf149f6a823"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "Aqua", "CUDA", "CheckConcreteStructs"]
+test = ["Test", "Aqua", "CUDA", "CheckConcreteStructs", "ReTestItems"]

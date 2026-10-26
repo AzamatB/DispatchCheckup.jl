@@ -105,8 +105,8 @@ The guard files run after every checked run, so a suite that runs subsets should
 `original = "test_guards.jl" in selected ? ("test_guards.jl",) : ()`). The paths are
 relative to the file that calls `dispatch_doctor`. `DISPATCH_CHECKUP` is `"checked"`
 during a checked run, and in the Julia processes it starts: those load the checked package
-too. A process that calls `dispatch_doctor` itself (a test that runs `runtests.jl` again,
-say) is checked with its own options instead.
+too, ReTestItems' workers among them. A process that calls `dispatch_doctor` itself (a test
+that runs `runtests.jl` again, say) is checked with its own options instead.
 
 ## In CI
 
@@ -191,9 +191,10 @@ throw an `UnanalyzableModuleException`. Run such checks as `original=` files.
 ## Development
 
 ```sh
-julia --startup-file=no --project=. -e 'using Pkg; Pkg.test()'
-julia --startup-file=no --project=. -e 'using Pkg; Pkg.test(test_args = ["test_gpu.jl"])'
+julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test()'
+julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test(test_args = ["gpu_tests.jl"])'
 ```
 
-The suite needs a GPU: its CUDA tests also check that the checked kernels compile to the
-same PTX as the ordinary ones.
+The test items of `test/*_tests.jl` run on [ReTestItems](https://github.com/JuliaTesting/ReTestItems.jl)
+worker processes; `test_args` names the files whose items run. The suite needs a GPU: its CUDA
+tests also check that the checked kernels compile to the same PTX as the ordinary ones.

@@ -1,5 +1,7 @@
 # Checked runs of a CUDA package, in Julia processes that need a GPU: a missing GPU fails.
+@testsetup module CudaFixture
 using Test
+include(joinpath(@__DIR__, "support.jl"))
 using .Fixtures: CHECKUP, Fixtures, UUIDS, julia, package_project, resolve, write_files
 
 const GPU_FIXTURE = Dict(
@@ -121,6 +123,7 @@ end
 # DispatchDoctor applies `CUDA.@device_override` to its inferred copy of the function too,
 # which cannot work, so that definition is excluded by its line.
 const OVERRIDE = findfirst(startswith("CUDA.@device_override"), split(GPU_FIXTURE["src/DCFixtureGPU.jl"], '\n'))
+
 const UNSTABLE_OVERRIDE = ":override_product => \"src/DCFixtureGPU.jl:$OVERRIDE\""
 
 gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", prelude = "") = """
@@ -134,7 +137,11 @@ gpu_script(body; activate = true, options = "unstable = $UNSTABLE_OVERRIDE", pre
     end
     """
 
-@testset "DispatchCheckup with CUDA" begin
+export GPU_FIXTURE, GPU_BODY, PTX_DUMPS, ALTERED, normalized_ptx, ptx_differences, OVERRIDE, UNSTABLE_OVERRIDE,
+    gpu_script, CHECKUP, Fixtures, UUIDS, julia, package_project, resolve, write_files
+end
+
+@testitem "DispatchCheckup with CUDA" setup = [CudaFixture] begin
     mktempdir() do sandbox
         package = write_files(joinpath(sandbox, "DCFixtureGPU"), GPU_FIXTURE)
         env = joinpath(sandbox, "env")

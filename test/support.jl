@@ -20,7 +20,8 @@ const UUIDS = Dict("DispatchCheckup" => "ca055ede-32eb-4961-937e-82d9c5ec6430",
                    "DCFixtureGPU" => "6689c958-80c0-4aa5-a751-21295d56c2ee",
                    "DCUsesDoctor" => "0f021db6-fcf7-4914-a5c7-94b770dab57c",
                    "DCAllowUnstable" => "710ae0fb-4f09-48f0-9a9f-d98297e6d158",
-                   "CUDA" => "052768ef-5323-5732-b1bb-66c8b64840ba")
+                   "CUDA" => "052768ef-5323-5732-b1bb-66c8b64840ba",
+                   "ReTestItems" => "817f1d60-ba6b-4fd5-9520-3cf149f6a823")
 
 function write_files(root::String, files)
     for (path, content) in files
