@@ -263,7 +263,7 @@ end
             @test DCFixture.where_dir() == joinpath(ENV["DCT_ROOT"], "src")
             @test DCFixture.INIT_DIR[] == ENV["DCT_ROOT"]  # (in __init__, from the image)
             @test isdefined(DCFixture, Symbol("#DispatchCheckup"))  # (the module doing that)
-            # other packages keep the registered DispatchDoctor (and its false positive)
+            # other packages keep the registered DispatchDoctor and its keyword checks
             @test pathof(DCUsesDoctor.DispatchDoctor) != pathof(DispatchCheckup.DispatchDoctor)
             @test detected(DCUsesDoctor.typed_kw, 1; T = Float32)
             # Julia processes started here are checked too, or with their own options
@@ -271,12 +271,15 @@ end
             @test occursin("DCT_CHILD_PLAIN true true", child("child_plain.jl"))
             @test occursin("DCT_CHILD_OWN 1 true", child("child_own.jl"))
             @test detected(DCFixture.unstable, 1)
-            # the fixes of the DispatchDoctor fork: wide calls, Type keywords, infer=false
+            # merged upstream fixes and the retained infer=false behavior
             args = ntuple(Float64, Val(36))
             allocations(args) = @allocated DCFixture.wide(args...)
             @test DCFixture.wide(args...) == 37.0
             @test allocations(args) == 0
-            @test DCFixture.typed_kw(1; T = Float32) === 1.0f0
+            # Type keywords follow upstream, including when their values are only known at run time.
+            @test_throws DispatchCheckup.DispatchDoctor.TypeInstabilityError DCFixture.typed_kw(1; T = Float32)
+            dynamic_kw(T) = DCFixture.typed_kw(1; T)
+            @test_throws DispatchCheckup.DispatchDoctor.TypeInstabilityError dynamic_kw(Any[Float32][1])
             @test DCFixture.NoInfer.noinfer(1) == 1
             # the same call again does nothing; other options are an error
             @test DispatchCheckup.dispatch_doctor(:DCFixture) === nothing

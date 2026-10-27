@@ -131,9 +131,9 @@ AMGX solver on the GPU and solve with it, so either could fail the other.
 ## The DispatchDoctor fork
 
 [AzamatB/DispatchDoctor.jl, branch `dispatchcheckup-v2`](https://github.com/AzamatB/DispatchDoctor.jl/tree/dispatchcheckup-v2)
-is DispatchDoctor's main branch (the 0.4.29 release) plus twelve commits: the six fixes
-P1–P6, exactly as proposed in upstream PRs #131–#136 (combined as they would merge), then
-six fork-only commits. DispatchCheckup's `[sources]` pins it, and Pkg also uses it for
+includes upstream main through `4559c329` (still version 0.4.29), the pending P5 fix, and
+the integration changes below. The rejected P2 change has been removed. DispatchCheckup's
+`[sources]` pins the fork to a commit, and Pkg also uses it for
 packages that add DispatchCheckup by URL or path. The fork keeps DispatchDoctor's name but
 has its own UUID. With the registered UUID, every environment
 with DispatchCheckup would resolve the registered DispatchDoctor to the fork, for the
@@ -144,33 +144,39 @@ the registered release's `allow_unstable` still pauses the checks (P8), but its
 `register_macro!` does not reach them (that of `DispatchCheckup.DispatchDoctor` does), and
 the checks throw the fork's `TypeInstabilityError`, a different type from the registered
 one. The package's own `@stable` and `@unstable` blocks are recognized by name and left to
-the registered release. Releasing the fixes upstream would let DispatchCheckup depend on the
-registered DispatchDoctor.
+the registered release. The merged fixes alone do not replace the fork: DispatchCheckup
+still needs its integration APIs and independent package identity.
 
-Upstream PRs:
+Merged upstream fixes:
 
 - **P1** ([#131](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/131)) The check
   builds the tuple of argument types at its known size and passes it to inference as one
   `Tuple` type, so a call with more than 32 arguments no longer allocates, and `Type`
   arguments cost nothing extra.
-- **P2** ([#132](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/132)) Keyword
-  arguments are inferred with the same types as positional ones, so a type passed by
-  keyword (`f(x; T = Float32)`) is not a false instability.
 - **P3** ([#133](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/133)) The inferred
   copy of a function keeps its source lines, so `@__DIR__`, `@__FILE__` and command
   literals mean the same as in the real function; the definition appears in the stack
   trace of a `TypeInstabilityError`.
 - **P4** ([#134](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/134)) The generated
   check qualifies `!` and `Val`, so it works in a `baremodule`.
-- **P5** ([#135](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/135)) No check in
-  modules that turn inference off (`@compiler_options infer=false`, common in JLL
-  packages), where every call would look unstable.
 - **P6** ([#136](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/136)) An argument
   `::Type{K}` where `K` is itself a type of types (`DataType`, say) is specialized on
   correctly, which removes a false positive.
+- [#140](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/140) prevents a Julia 1.10
+  inference crash with `Union{}` arguments. The upstream benchmark and stack-frame test
+  additions in #138 and #139 are included too.
 
-Fork-only commits:
+**P2** ([#132](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/132)) was rejected
+upstream and is no longer included. Type-valued keywords use their ordinary inferred
+types, matching upstream. Specializing them on their values could hide a real instability
+when the type is only known at run time; `f(x; T = Float32)` is therefore no longer
+automatically accepted merely because the actual value of `T` is a concrete type.
 
+Remaining fork changes:
+
+- **P5** ([#135](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/135), still open)
+  No check in modules that turn inference off (`@compiler_options infer=false`, common in
+  JLL packages), where every call would look unstable.
 - **P7** The integration surface: `DISPATCHCHECKUP_PATCHLEVEL`,
   `stabilize_expression(mod, ex; ...)` (as above, without the "found no compatible
   functions" warning, so it can run on every expression) and

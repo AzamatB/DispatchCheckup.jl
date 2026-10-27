@@ -9,7 +9,7 @@ MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
-DispatchDoctor = {url = "https://github.com/AzamatB/DispatchDoctor.jl", rev = "f598693d0ee9a5a4d82a36289fb0191a0b4d7bb9"}
+DispatchDoctor = {url = "https://github.com/AzamatB/DispatchDoctor.jl", rev = "fa878702fc0318139eab86c8e7fa179be64cbf8b"}
 Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "9c91dd18c4ca95c6dc7ee81a5f1bf40458130fa4"}
 CheckConcreteStructs = {url = "https://github.com/AzamatB/CheckConcreteStructs.jl.git", rev = "fb7bc8dbdf71ce30f398d0c3f7b95e96a0210125"}
 

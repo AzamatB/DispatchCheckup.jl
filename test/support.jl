@@ -41,7 +41,7 @@ const USES_DOCTOR = Dict(
     "src/DCUsesDoctor.jl" => """
         module DCUsesDoctor
         import DispatchDoctor
-        # Registered DispatchDoctor 0.4.29 takes this call for unstable; the fork does not.
+        # Type-valued keywords retain the registered package's instability checks.
         DispatchDoctor.@stable typed_kw(x; T = Float64) = T(x)
         plain_unstable(x) = x > 0 ? x : 0.0
         end
