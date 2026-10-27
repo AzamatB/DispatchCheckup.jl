@@ -13,13 +13,13 @@ DispatchDoctor = {url = "https://github.com/AzamatB/DispatchDoctor.jl", rev = "m
 Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "main"}
 CheckConcreteStructs = {url = "https://github.com/AzamatB/CheckConcreteStructs.jl.git", rev = "main"}
 [compat]
-DispatchDoctor = "0.4"
-MacroTools = "0.5"
+DispatchDoctor = "0.4.29"
+MacroTools = "0.5.16"
 TOML = "1.0.3"
 julia = "1.13.3"
 Aqua = "1.0.0"
 CUDA = "6.5.0"
-CheckConcreteStructs = "0.1"
+CheckConcreteStructs = "0.1.1"
 ReTestItems = "1.35.3"
 Test = "1.11.0"
 
