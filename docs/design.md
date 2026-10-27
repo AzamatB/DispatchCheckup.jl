@@ -27,7 +27,12 @@ does no work outside that call: importing DispatchCheckup only loads it.
    A shim is a few lines that require DispatchCheckup and call `_load_checked`, with the
    configuration (`unstable`, `mode`, `union_limit`) as a literal. Files are only
    rewritten when their content changes, so precompiled images survive from one run to
-   the next, and runs with other options, even concurrent ones, never share shims.
+   the next, and runs with other options, even concurrent ones, never share shims. The
+   scratch space comes from `Scratch.get_scratch!`, which records it as used by
+   DispatchCheckup's project: `Pkg.gc` deletes the spaces that no existing project is
+   recorded as using, and keeps this one while that DispatchCheckup is installed, so a
+   `Pkg.gc` in any process (Pkg runs one on its own after a `Pkg.update`) leaves the
+   overlays of running suites in place.
 5. **Write a per-run environment** and put it first on `LOAD_PATH` (and in
    `JULIA_LOAD_PATH`, for the Julia processes the tests start): a `Project.toml` with the
    package in `[extras]`, a copy of the active manifest in which the package's path is the

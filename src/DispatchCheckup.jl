@@ -4,7 +4,7 @@ whole package, without changing the package's source. See [`dispatch_doctor`](@r
 """
 module DispatchCheckup
 
-import DispatchDoctor, TOML
+import DispatchDoctor, Scratch, TOML
 using MacroTools: @capture, isdef, longdef1, postwalk, splitdef
 
 public dispatch_doctor

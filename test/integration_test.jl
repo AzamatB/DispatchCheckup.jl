@@ -364,6 +364,27 @@ end
     files_unchanged()
 end
 
+@testitem "a Pkg.gc between the activation and `using` keeps the overlay" setup = [Checkups] begin
+    # Another process's Pkg.gc (Pkg also runs one on its own, after a Pkg.update) collects the run's first depot, the
+    # item's own: it deletes the scratch spaces that no existing project is recorded as using, here `unused`, but
+    # keeps the overlay, from which the checked package is then precompiled and loaded.
+    result = show_failure(run_script(env, "gc", depot = own("gc"), """
+        import DispatchCheckup
+        DispatchCheckup.dispatch_doctor(:DCFixture)
+        spaces = joinpath(first(DEPOT_PATH), "scratchspaces", "$(UUIDS["DispatchCheckup"])")
+        mkdir(joinpath(spaces, "unused"))
+        other = filter(p -> !startswith(first(p), "DISPATCH_CHECKUP"), copy(ENV))
+        other["JULIA_LOAD_PATH"] = "@:@stdlib"
+        gc = "first(DEPOT_PATH) == \$(repr(first(DEPOT_PATH))) || exit(2); using Pkg; Pkg.gc()"
+        run(setenv(`\$(Base.julia_cmd()) --project=\$(Base.active_project()) -e \$gc`, other))
+        using Test, DCFixture
+        @test readdir(spaces) == ["overlays"]
+        @test_throws DispatchCheckup.DispatchDoctor.TypeInstabilityError DCFixture.unstable(1)
+        """))
+    @test result.code == 0
+    files_unchanged()
+end
+
 # The Godela suites run their test items on ReTestItems' workers: Julia processes that a checked run starts, which
 # load the checked package too. DCFixture's test/runtests.jl here makes a checked run that hands one item to one
 # worker, in an environment of the test environment's manifest (which has ReTestItems), plus DCFixture.

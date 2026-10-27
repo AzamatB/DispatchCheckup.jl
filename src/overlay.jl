@@ -64,12 +64,15 @@ function _update(path::String, content::Vector{UInt8})
     return mv(temporary, path; force = true)
 end
 
-# The overlay lives under the first depot, in one directory per checkout and configuration
-# (both are in the target's shim), so that runs with other options never share its shims.
+# The overlay lives in DispatchCheckup's scratch space `overlays` in the first depot, in one
+# directory per checkout and configuration (both are in the target's shim), so that runs with
+# other options never share its shims. Scratch records the space's use, by DispatchCheckup's
+# project, in the depot's logs/scratch_usage.toml, and Pkg.gc keeps a scratch space only while
+# a project recorded as using it exists (otherwise any Pkg.gc, such as the one that Pkg runs
+# on its own after a `Pkg.update`, deletes the overlay under the runs that load from it).
 function _write_overlay(t, cfg::Config)
     key = string(hash(_shim(t.id, t.entry, cfg)); base = 16)
-    dir = joinpath(first(DEPOT_PATH), "scratchspaces", string(CHECKUP.uuid), "overlays",
-                   "$(t.id.name)-$key")
+    dir = joinpath(Scratch.get_scratch!(CHECKUP.uuid, "overlays"), "$(t.id.name)-$key")
     _update(joinpath(dir, relpath(t.file, t.root)), read(t.file))
     shims = Dict{Base.PkgId,String}()
     for (pkg, entry) in [t.id => t.entry; collect(t.exts)]

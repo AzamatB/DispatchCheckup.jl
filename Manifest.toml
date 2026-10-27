@@ -2,7 +2,7 @@
 
 julia_version = "1.13.3"
 manifest_format = "2.1"
-project_hash = "4a036193321da8cf878aeeda870172266479aac4"
+project_hash = "a884e03b49eec4c7e345d6b22a1bedcff887a451"
 
 [[deps.Dates]]
 deps = ["Printf"]
@@ -10,7 +10,7 @@ uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 version = "1.11.0"
 
 [[deps.DispatchCheckup]]
-deps = ["DispatchDoctor", "MacroTools", "TOML"]
+deps = ["DispatchDoctor", "MacroTools", "Scratch", "TOML"]
 path = "."
 uuid = "ca055ede-32eb-4961-937e-82d9c5ec6430"
 version = "0.2.2"
@@ -48,6 +48,13 @@ version = "1.6.1"
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 version = "1.11.0"
+
+[[deps.Scratch]]
+deps = ["Dates"]
+git-tree-sha1 = "9b81b8393e50b7d4e6d0a9f14e192294d3b7c109"
+registries = "General"
+uuid = "6c6a2e73-6563-6170-7368-637461726353"
+version = "1.3.0"
 
 [[deps.TOML]]
 deps = ["Dates"]
