@@ -2,7 +2,7 @@
 
 julia_version = "1.13.3"
 manifest_format = "2.1"
-project_hash = "77d820a5543b2d2f47d48f9fec6ffc8d5c18a451"
+project_hash = "1894ecfb5125aa8977e034d612dbaa9a9dc4bd2b"
 
 [[deps.Dates]]
 deps = ["Printf"]
@@ -18,7 +18,7 @@ version = "0.2.2"
 [[deps.DispatchDoctor]]
 deps = ["MacroTools", "Preferences"]
 git-tree-sha1 = "9cdf88e07ccdfd4ab64cc144912a035ed6f761cc"
-repo-rev = "fa878702fc0318139eab86c8e7fa179be64cbf8b"
+repo-rev = "main"
 repo-url = "https://github.com/AzamatB/DispatchDoctor.jl"
 uuid = "c2bcafe0-aaa5-4bef-983d-8af4248d41f3"
 version = "0.4.29"

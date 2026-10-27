@@ -45,7 +45,7 @@ project that used DispatchCheckup 0.1 runs `Pkg.update("DispatchCheckup")` after
 the compat entry; if Pkg still reports an empty intersection with 0.1.2, remove the old
 record (`Pkg.rm("DispatchCheckup")`) and add it again.
 
-DispatchCheckup needs a [fork of DispatchDoctor](https://github.com/AzamatB/DispatchDoctor.jl/tree/dispatchcheckup-v2)
+DispatchCheckup needs a [fork of DispatchDoctor](https://github.com/AzamatB/DispatchDoctor.jl/tree/main)
 (see [the design notes](docs/design.md)). Its own `[sources]` names the fork, and Pkg picks
 it up from there. The fork has its own UUID, so it is a separate package that only
 DispatchCheckup loads: with the registered DispatchDoctor's UUID, it would replace that
