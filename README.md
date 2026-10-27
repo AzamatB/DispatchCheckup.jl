@@ -168,12 +168,17 @@ its `@stable` and `@unstable` blocks are left to the registered DispatchDoctor. 
 `allow_unstable` pauses the checks too, but its `register_macro!` does not reach them: use
 `DispatchCheckup.DispatchDoctor.register_macro!` in a checked run.
 
-The DispatchDoctor fork fixes a few false positives and other problems of DispatchDoctor
-0.4.29, with the changes proposed upstream in PRs
-[#131](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/131)–[#136](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/136):
-calls with many arguments, types passed by keyword, `@__DIR__` and `@__FILE__` inside
-checked functions, `baremodule`s, modules with inference turned off, and `Type{K}`
-arguments where `K` is itself a type of types.
+The DispatchDoctor fork includes upstream's merged fixes for wide calls, `@__DIR__` and
+`@__FILE__` inside checked functions, `baremodule`s, `Type{K}` arguments where `K` is itself
+a type of types, and Julia 1.10 inference with `Union{}` arguments. It also retains the
+pending [#135](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/135) change to skip
+checks in modules with inference turned off, plus the integration described above.
+
+Type-valued keyword arguments now follow upstream's behavior: calls such as
+`f(x; T = Float32)` can report an instability when the inferred keyword type is `DataType`.
+The fork no longer includes the rejected [#132](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/132)
+change, which specialized these keywords on their values and could hide instabilities
+when the type was only known at run time.
 
 A checked run also fails, with a message, when:
 
@@ -204,8 +209,8 @@ throw an `UnanalyzableModuleException`. Run such checks as `original=` files.
 ## Development
 
 ```sh
-julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test()'
-julia --startup-file=no --depwarn=error --project=. -e 'using Pkg; Pkg.test(test_args = ["gpu_test.jl"])'
+julia --startup-file=no --depwarn=error --check-bounds=yes --project=. -e 'using Pkg; Pkg.test()'
+julia --startup-file=no --depwarn=error --check-bounds=yes --project=. -e 'using Pkg; Pkg.test(test_args = ["gpu_test.jl"])'
 ```
 
 The test items of `test/*_test.jl` run on [ReTestItems](https://github.com/JuliaTesting/ReTestItems.jl)
