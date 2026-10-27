@@ -16,11 +16,11 @@ CheckConcreteStructs = {url = "https://github.com/AzamatB/CheckConcreteStructs.j
 DispatchDoctor = "0.4.29"
 MacroTools = "0.5"
 TOML = "1"
-julia = "1.13"
+julia = "1.13.3"
 Aqua = "1"
-CUDA = "6.4.2"
+CUDA = "6"
 CheckConcreteStructs = "0.1"
-ReTestItems = "1.35"
+ReTestItems = "1"
 Test = "1"
 
 [extras]
