@@ -40,12 +40,12 @@ DispatchCheckup = "0.2"
 
 With `[extras]` and `[targets]` in the package's `Project.toml`, put the UUID in
 `[extras]`, add `"DispatchCheckup"` to `[targets].test` and use the same `[sources]` and
-`[compat]` entries (Aqua's compat check wants the latter). Julia 1.13 is required. A
+`[compat]` entries (Aqua's compat check wants the latter). Julia 1.13.3 or later is required. A
 project that used DispatchCheckup 0.1 runs `Pkg.update("DispatchCheckup")` after changing
 the compat entry; if Pkg still reports an empty intersection with 0.1.2, remove the old
 record (`Pkg.rm("DispatchCheckup")`) and add it again.
 
-DispatchCheckup needs a [fork of DispatchDoctor](https://github.com/AzamatB/DispatchDoctor.jl/tree/dispatchcheckup-v2)
+DispatchCheckup needs a [fork of DispatchDoctor](https://github.com/AzamatB/DispatchDoctor.jl/tree/main)
 (see [the design notes](docs/design.md)). Its own `[sources]` names the fork, and Pkg picks
 it up from there. The fork has its own UUID, so it is a separate package that only
 DispatchCheckup loads: with the registered DispatchDoctor's UUID, it would replace that
@@ -142,7 +142,7 @@ end
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
-          version: "1.13"
+          version: "1.13.3"
       - uses: julia-actions/julia-runtest@v1
 ```
 
