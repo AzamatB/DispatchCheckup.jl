@@ -80,8 +80,8 @@ const ALLOW_UNSTABLE_TESTS = """
     """
 const ALLOW_UNSTABLE_LINES = "import DispatchCheckup\nDispatchCheckup.dispatch_doctor(:DCAllowUnstable)"
 
-export CHECKUP, Fixtures, USES_DOCTOR, UUIDS, julia, package_project, write_files, layout_files, ALLOW_UNSTABLE_TESTS,
-    ALLOW_UNSTABLE_LINES
+export ALLOW_UNSTABLE_LINES, ALLOW_UNSTABLE_TESTS, CHECKUP, Fixtures, USES_DOCTOR, UUIDS, julia, layout_files,
+    package_project, write_files
 end
 
 @testitem "the registered DispatchDoctor's allow_unstable" setup = [Layouts] begin

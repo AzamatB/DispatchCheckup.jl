@@ -216,8 +216,8 @@ files_unchanged() = @testset "the package's files are unchanged" begin
               for (path, hash_) in before)
 end
 
-export CHECKUP, Fixtures, UUIDS, write_files, julia, script, run_script, markers, show_failure, LINED, DOCUMENTED,
-    sandbox, env, plain, fixture_root, own, files_unchanged
+export CHECKUP, DOCUMENTED, Fixtures, LINED, UUIDS, env, files_unchanged, fixture_root, julia, markers, own, plain,
+    run_script, sandbox, script, show_failure, write_files
 end
 
 @testitem "a new configuration rebuilds the precompiled image" setup = [Checkups] begin
@@ -510,7 +510,7 @@ end
     for records in values(manifest["deps"]), record in records
         haskey(record, "path") && (record["path"] = normpath(env, record["path"]))
     end
-    records = manifest["deps"]["DispatchDoctor"]::Vector{Any}  # (the fork and the registered one)
+    records::Vector{Any} = manifest["deps"]["DispatchDoctor"]  # (the fork and the registered one)
     records[findfirst(r -> r["uuid"] == UUIDS["DispatchDoctor"], records)] =
         Dict("uuid" => UUIDS["DispatchDoctor"], "version" => "0.4.29", "path" => fake)
     write_files(unforked, Dict("Project.toml" => Fixtures.TOML.parsefile(joinpath(env, "Project.toml")),
