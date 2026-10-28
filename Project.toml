@@ -1,6 +1,6 @@
 name = "DispatchCheckup"
 uuid = "ca055ede-32eb-4961-937e-82d9c5ec6430"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Azamat Berdyshev <aberdysh@gmail.com>"]
 
 [deps]
@@ -11,7 +11,7 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [sources]
 DispatchDoctor = {url = "https://github.com/AzamatB/DispatchDoctor.jl", rev = "fa878702fc0318139eab86c8e7fa179be64cbf8b"}
-Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "main"}
+Aqua = {url = "https://github.com/AzamatB/Aqua.jl.git", rev = "master"}
 CheckConcreteStructs = {url = "https://github.com/AzamatB/CheckConcreteStructs.jl.git", rev = "main"}
 [compat]
 DispatchDoctor = "0.4.29"

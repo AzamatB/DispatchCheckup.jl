@@ -2,7 +2,7 @@
 
 julia_version = "1.13.3"
 manifest_format = "2.1"
-project_hash = "a884e03b49eec4c7e345d6b22a1bedcff887a451"
+project_hash = "dc2427a4e5089d4e5118b1864d37d4af6d66d3ff"
 
 [[deps.Dates]]
 deps = ["Printf"]
@@ -13,7 +13,7 @@ version = "1.11.0"
 deps = ["DispatchDoctor", "MacroTools", "Scratch", "TOML"]
 path = "."
 uuid = "ca055ede-32eb-4961-937e-82d9c5ec6430"
-version = "0.2.2"
+version = "0.2.3"
 
 [[deps.DispatchDoctor]]
 deps = ["MacroTools", "Preferences"]
