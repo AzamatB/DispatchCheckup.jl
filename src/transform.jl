@@ -61,9 +61,10 @@ _unwrap(ex) = Meta.isexpr(ex, :macrocall) && length(ex.args) > 2 ? _unwrap(ex.ar
 # A function definition as DispatchDoctor recognizes one (the same test as `@stable`):
 # where it is (module path, file relative to the package root, first line) and its name.
 function _definition(ex, modpath::String, root::String)
-    isdef(ex) && @capture(longdef1(ex), function (fcall_ | fcall_) body_ end) || return nothing
+    MacroTools.isdef(ex) && MacroTools.@capture(MacroTools.longdef1(ex), function (fcall_ | fcall_) body_ end) ||
+        return nothing
     name = try
-        get(splitdef(ex), :name, nothing)
+        get(MacroTools.splitdef(ex), :name, nothing)
     catch
         nothing  # a form that DispatchDoctor leaves alone
     end
@@ -228,7 +229,7 @@ function _scan_code!(scan::Scan, ex, file::String, modpath::String)
         if Meta.isexpr(e, :for) && Meta.isexpr(e.args[1], :(=))  # for f in ("a.jl", ...)
             var, values = e.args[1].args
             if Meta.isexpr(values, (:tuple, :vect)) && all(v -> v isa String, values.args)
-                foreach(v -> _scan_code!(scan, postwalk(x -> x === var ? v : x, e.args[2]), file, m),
+                foreach(v -> _scan_code!(scan, MacroTools.postwalk(x -> x === var ? v : x, e.args[2]), file, m),
                         values.args)
                 return e
             end
