@@ -27,7 +27,12 @@ does no work outside that call: importing DispatchCheckup only loads it.
    A shim is a few lines that require DispatchCheckup and call `_load_checked`, with the
    configuration (`unstable`, `mode`, `union_limit`) as a literal. Files are only
    rewritten when their content changes, so precompiled images survive from one run to
-   the next, and runs with other options, even concurrent ones, never share shims.
+   the next, and runs with other options, even concurrent ones, never share shims. The
+   scratch space comes from `Scratch.get_scratch!`, which records it as used by
+   DispatchCheckup's project: `Pkg.gc` deletes the spaces that no existing project is
+   recorded as using, and keeps this one while that DispatchCheckup is installed, so a
+   `Pkg.gc` in any process (Pkg runs one on its own after a `Pkg.update`) leaves the
+   overlays of running suites in place.
 5. **Write a per-run environment** and put it first on `LOAD_PATH` (and in
    `JULIA_LOAD_PATH`, for the Julia processes the tests start): a `Project.toml` with the
    package in `[extras]`, a copy of the active manifest in which the package's path is the
@@ -130,10 +135,10 @@ AMGX solver on the GPU and solve with it, so either could fail the other.
 
 ## The DispatchDoctor fork
 
-[AzamatB/DispatchDoctor.jl, branch `main`](https://github.com/AzamatB/DispatchDoctor.jl/tree/main)
+[AzamatB/DispatchDoctor.jl, branch `dispatchcheckup-v2`](https://github.com/AzamatB/DispatchDoctor.jl/tree/dispatchcheckup-v2)
 includes upstream main through `4559c329` (still version 0.4.29), the pending P5 fix, and
 the integration changes below. The rejected P2 change has been removed. DispatchCheckup's
-`[sources]` tracks the fork's `main` branch, and Pkg also uses it for
+`[sources]` pins the fork to a commit, and Pkg also uses it for
 packages that add DispatchCheckup by URL or path. The fork keeps DispatchDoctor's name but
 has its own UUID. With the registered UUID, every environment
 with DispatchCheckup would resolve the registered DispatchDoctor to the fork, for the
