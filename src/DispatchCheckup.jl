@@ -230,10 +230,12 @@ function _original_command(files::Vector{String}, project::Union{Nothing,String}
 end
 
 # Start the guard process alongside the suite. Its output (stdout and stderr) goes to a
-# file, so that it does not interleave with the suite's.
+# file, so that it does not interleave with the suite's. `process` is typed: `open(f, ...)`
+# infers as `Any`, and a `getpid` call on `Any` gets this cached code rejected at load when
+# a package loaded before DispatchCheckup adds a method of `getpid` for its own type.
 function _start_original(command::Cmd)
     log = tempname()
-    process = try
+    process::Base.Process = try
         open(io -> run(pipeline(command; stdout = io, stderr = io); wait = false), log, "w")
     catch e
         error("DispatchCheckup: could not start the Julia process for the original= files: ",
