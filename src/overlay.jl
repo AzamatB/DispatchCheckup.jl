@@ -85,9 +85,36 @@ end
 
 _write_toml(path::String, data::AbstractDict) = open(io -> TOML.print(io, data; sorted = true), path, "w")
 
+# The preferences the load path gives each package now, as Base reads them for it
+# (`Base.get_preferences(uuid)`), for every package that a preferences source on the load
+# path names and that `deps` (the active manifest's) or the checked package `t` identifies:
+# name => (UUID, preferences). Called before the per-run environment goes first on
+# LOAD_PATH, which would hide every preference Base finds only by walking the active
+# project's workspace up to its root, since Base walks from the first entry alone.
+function _active_preferences(t, deps::AbstractDict)
+    candidates = Dict{String,Vector{String}}(t.id.name => [string(t.id.uuid)])
+    for (name, records) in deps
+        records isa AbstractVector || continue
+        for record in records
+            uuid = get(record, "uuid", nothing)
+            uuid isa String && push!(get!(Vector{String}, candidates, name), uuid)
+        end
+    end
+    found = Dict{String,Tuple{String,Dict{String,Any}}}()
+    for name in sort!(collect(keys(Base.get_preferences())))  # every package a source names
+        for uuid in unique!(get(candidates, name, String[]))
+            preferences = Base.get_preferences(Base.UUID(uuid))
+            isempty(preferences) || (found[name] = (uuid, preferences))
+        end
+    end
+    return found
+end
+
 # The per-run environment: a copy of the active manifest in which the package comes from
-# the overlay (and also depends on DispatchCheckup), and preferences that set
-# DispatchDoctor's options for it.
+# the overlay (and also depends on DispatchCheckup), and the preferences the load path gave
+# each package before it (`_active_preferences`), with DispatchDoctor's options for the
+# package over the package's own. Its Project.toml lists those packages in [extras], since
+# Base applies a project's preferences only to the packages it lists.
 function _write_environment(t, overlay::String, cfg::Config)
     dir = mktempdir(; prefix = "dispatchcheckup-")
     project = Base.active_project()
@@ -95,6 +122,7 @@ function _write_environment(t, overlay::String, cfg::Config)
     manifest = file === nothing ? Dict{String,Any}() : TOML.parsefile(file)
     haskey(manifest, "manifest_format") || (manifest = Dict("manifest_format" => "2.0", "deps" => manifest))
     deps = get!(Dict{String,Any}, manifest, "deps")
+    carried = _active_preferences(t, deps)
     if file !== nothing  # (otherwise `deps` is empty)
         for records in values(deps), record in records
             haskey(record, "path") && (record["path"] = normpath(dirname(file), record["path"]))
@@ -110,11 +138,15 @@ function _write_environment(t, overlay::String, cfg::Config)
     own = get(record, "deps", Dict{String,Any}())
     own isa AbstractVector && (own = Dict(n => only(deps[n])["uuid"] for n in own))
     record["deps"] = merge(own, Dict(CHECKUP.name => string(CHECKUP.uuid)))
-    _write_toml(joinpath(dir, "Project.toml"), Dict("extras" => Dict(t.id.name => string(t.id.uuid))))
-    _write_toml(joinpath(dir, "Manifest.toml"), manifest)
-    _write_toml(joinpath(dir, "LocalPreferences.toml"), Dict(t.id.name => Dict(
+    extras = Dict{String,Any}(name => uuid for (name, (uuid, _)) in carried)
+    extras[t.id.name] = string(t.id.uuid)
+    preferences = Dict{String,Any}(name => p for (name, (_, p)) in carried)
+    preferences[t.id.name] = merge(get(Dict{String,Any}, preferences, t.id.name), Dict{String,Any}(
         "dispatch_doctor_mode" => cfg.mode, "dispatch_doctor_union_limit" => cfg.union_limit,
-        "dispatch_doctor_codegen_level" => "debug")))
+        "dispatch_doctor_codegen_level" => "debug"))
+    _write_toml(joinpath(dir, "Project.toml"), Dict("extras" => extras))
+    _write_toml(joinpath(dir, "Manifest.toml"), manifest)
+    _write_toml(joinpath(dir, "LocalPreferences.toml"), preferences)
     return dir
 end
 
