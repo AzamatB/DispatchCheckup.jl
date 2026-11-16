@@ -88,7 +88,10 @@ a loop over literal file names; it lists the others in that error.
 `mode` and `union_limit` are DispatchDoctor's `default_mode` (`"error"`, or `"warn"` to only
 log instabilities) and `default_union_limit` (`2` accepts `Union{Float32, Float64}`, say).
 DispatchCheckup sets them as the package's preferences for the run, so that a
-`dispatch_doctor_mode = "disable"` preference cannot switch the checks off.
+`dispatch_doctor_mode = "disable"` preference cannot switch the checks off. Every other
+preference the environment gives a package, a workspace root's `LocalPreferences.toml`
+among them, still reaches the run, the workers it starts and their Julia processes: the
+run's own environment, first on the load path, carries a copy of them.
 
 `original` lists test files that must see the ordinary package, such as JET or
 allocation checks. They run in one fresh Julia process with the original environment and

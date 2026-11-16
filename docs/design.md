@@ -34,11 +34,19 @@ does no work outside that call: importing DispatchCheckup only loads it.
    `Pkg.gc` in any process (Pkg runs one on its own after a `Pkg.update`) leaves the
    overlays of running suites in place.
 5. **Write a per-run environment** and put it first on `LOAD_PATH` (and in
-   `JULIA_LOAD_PATH`, for the Julia processes the tests start): a `Project.toml` with the
-   package in `[extras]`, a copy of the active manifest in which the package's path is the
-   overlay (and DispatchCheckup is among its dependencies), and a
-   `LocalPreferences.toml` with DispatchDoctor's mode, union limit and codegen level
-   (`"debug"`) for the package. Being first, these preferences win over any others. The
+   `JULIA_LOAD_PATH`, for the Julia processes the tests start): a copy of the active
+   manifest in which the package's path is the overlay (and DispatchCheckup is among its
+   dependencies); a `LocalPreferences.toml` with the preferences the load path gave each
+   package just before (`Base.get_preferences(uuid)`, for every package that a preferences
+   source on it names and that the active manifest lists), the package's own merged with
+   DispatchDoctor's mode, union limit and codegen level (`"debug"`), which win where they
+   overlap; and a `Project.toml` that lists those packages and the package in `[extras]`,
+   since Base applies a project's preferences only to the packages it lists. Base walks a
+   workspace up to its root's preferences from the first `LOAD_PATH` entry alone, so
+   without the copy a workspace root's preferences (a CUDA toolkit pin, say) would not
+   reach the run, its workers or the processes they start; nothing is written that the
+   original preference files did not hold. Being first, these preferences win over any
+   others, in a process the tests start with another project too. The
    active project stays what it was (when it came from `LOAD_PATH`, as under `Pkg.test`,
    it is set explicitly first, and exported as `JULIA_PROJECT` for the Julia processes the
    tests start).

@@ -1,6 +1,7 @@
 # Pkg.test with both test layouts and with the registered DispatchDoctor as a test
-# dependency, and a consumer environment that gets the DispatchDoctor fork through
-# DispatchCheckup's [sources]. Each item uses packages of its own, in a directory of its own.
+# dependency, a consumer environment that gets the DispatchDoctor fork through
+# DispatchCheckup's [sources], and a workspace whose root's preferences must reach a checked
+# run. Each item uses packages of its own, in a directory of its own.
 @testsetup module Layouts
 using Test
 include(joinpath(@__DIR__, "support.jl"))
@@ -178,4 +179,62 @@ end
         @test occursin("DCT_MARKER=true", result.output)
         @test occursin("DCT_SOURCE=https://github.com/AzamatB/DispatchDoctor.jl", result.output)
     end
+end
+
+# A workspace whose root pins a preference of a package that reads it at precompile time, as a JLL reads its toolkit
+# preference: the checked run puts its environment first on the load path, and Base walks a workspace up to its root's
+# preferences only from that first entry, so the run carries the preferences over. The run, a process it starts in
+# its project with the inherited JULIA_LOAD_PATH (as a ReTestItems worker or an item's child is), and the package's
+# precompiled image all see the pin; DispatchDoctor's mode stays the run's over the root's "disable".
+@testitem "a workspace root's preferences reach the checked run and its processes" setup = [Layouts] begin
+    mktempdir() do sandbox
+        pinned, user = UUIDS["DCPinned"], UUIDS["DCPinUser"]
+        pin = "get(Base.get_preferences(Base.UUID(\"$pinned\")), \"version\", \"none\")"
+        expected = Dict("DCPinned" => Dict("version" => "13.4"),
+                        "DCPinUser" => Dict("dispatch_doctor_mode" => "error", "dispatch_doctor_union_limit" => 1,
+                                            "dispatch_doctor_codegen_level" => "debug", "kept" => "yes"))
+        write_files(sandbox, Dict(
+            "Project.toml" => Dict("workspace" => Dict("projects" => ["app", "DCPinUser", "DCPinned"]),
+                                   "extras" => Dict("DCPinned" => pinned, "DCPinUser" => user)),
+            "LocalPreferences.toml" => Dict("DCPinned" => Dict("version" => "13.4"),
+                                            "DCPinUser" => Dict("dispatch_doctor_mode" => "disable", "kept" => "yes")),
+            "DCPinned/Project.toml" => package_project("DCPinned"),
+            "DCPinned/src/DCPinned.jl" => """
+                module DCPinned
+                # read at precompile time and recorded, so an image built under another value does not load
+                Base.record_compiletime_preference(Base.UUID("$pinned"), "version")
+                const PIN = $pin
+                end
+                """,
+            "DCPinUser/Project.toml" => package_project("DCPinUser"; deps = Dict("DCPinned" => pinned)),
+            "DCPinUser/src/DCPinUser.jl" => "module DCPinUser\nimport DCPinned\npinned() = DCPinned.PIN\nend\n",
+            "app/Project.toml" => Dict(
+                "deps" => Dict("DCPinUser" => user, "DCPinned" => pinned, "DispatchCheckup" => UUIDS["DispatchCheckup"]),
+                "sources" => Dict("DispatchCheckup" => Dict("path" => CHECKUP))),
+            "app/run.jl" => """
+                println("DCT_BEFORE ", $pin)
+                import DispatchCheckup
+                DispatchCheckup.dispatch_doctor(:DCPinUser)
+                println("DCT_AFTER ", $pin)
+                using DCPinUser
+                println("DCT_IMAGE ", DCPinUser.pinned())
+                environment = ENV["DISPATCH_CHECKUP_ENVIRONMENT"]
+                println("DCT_PREFERENCES ", Base.parsed_toml(joinpath(environment, "LocalPreferences.toml")) == $(repr(expected)))
+                child = "import DCPinUser; println(\\"DCT_CHILD \\", $(escape_string(pin)), \\" \\", DCPinUser.pinned())"
+                run(`\$(Base.julia_cmd()) --startup-file=no --project=\$(Base.active_project()) -e \$child`)
+                """))
+        app = joinpath(sandbox, "app")
+        Fixtures.resolve(app)
+        result = julia("--project=$app", joinpath(app, "run.jl"); dir = app)
+        result.code == 0 || println(result.output)
+        @test result.code == 0
+        marker(key) = something(findfirst(l -> startswith(l, key * " "), split(result.output, '\n')), 0)
+        line(key) = (i = marker(key); i == 0 ? "" : split(result.output, '\n')[i][length(key)+2:end])
+        @test line("DCT_BEFORE") == "13.4"   # the fixture pins it (the control)
+        @test line("DCT_AFTER") == "13.4"
+        @test line("DCT_IMAGE") == "13.4"
+        @test line("DCT_PREFERENCES") == "true"
+        @test line("DCT_CHILD") == "13.4 13.4"
+    end
+    Fixtures.remove_overlays("DCPinUser")
 end
