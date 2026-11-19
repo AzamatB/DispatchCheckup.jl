@@ -44,6 +44,32 @@ end
                                    "M", "/pkg")).final == "f"
 end
 
+@testitem "a module with a single definition uses the method's source line" setup = [Transform] begin
+    mktempdir() do pkg
+        mkpath(joinpath(pkg, "src"))
+        write(joinpath(pkg, "Project.toml"), """
+            name = "DCSingle"
+            uuid = "722f2b58-eb43-4102-a4e7-452de13b3a8c"
+            """)
+        entry = joinpath(pkg, "src", "DCSingle.jl")
+        write(entry, """
+            module DCSingle
+            choose(b::Bool) = b ? 1 : "two"
+            end
+            """)
+        @test only(first(DC._scan(pkg, [entry]))).line == 2
+        child = """
+            using DispatchCheckup, Test
+            pushfirst!(LOAD_PATH, $(repr(pkg)))
+            DispatchCheckup.dispatch_doctor(:DCSingle; unstable = :choose => "src/DCSingle.jl:2")
+            using DCSingle
+            @test DCSingle.choose(true) === 1
+            @test DCSingle.choose(false) == "two"
+            """
+        @test success(`$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) -e $child`)
+    end
+end
+
 @testitem "matching" setup = [Transform] begin
     @test excluded(:foo, "foo(x) = 1")
     @test excluded(:foo, "M.foo(x) = 1")

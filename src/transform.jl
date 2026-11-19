@@ -61,6 +61,9 @@ _unwrap(ex) = Meta.isexpr(ex, :macrocall) && length(ex.args) > 2 ? _unwrap(ex.ar
 # A function definition as DispatchDoctor recognizes one (the same test as `@stable`):
 # where it is (module path, file relative to the package root, first line) and its name.
 function _definition(ex, modpath::String, root::String)
+    # MacroTools recognizes a block with one definition as the definition itself. Its
+    # leading line can belong to the module. Visit the statement, as _mark does on load.
+    Meta.isexpr(ex, (:block, :toplevel)) && return nothing
     MacroTools.isdef(ex) && MacroTools.@capture(MacroTools.longdef1(ex), function (fcall_ | fcall_) body_ end) ||
         return nothing
     name = try
