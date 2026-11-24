@@ -205,4 +205,10 @@ Remaining fork changes:
   check reads the captured flag, with no lock and no lookup, so any number of threads can
   run checked code inside one `allow_unstable`. If nothing was captured (the package is
   not loaded, or its internals differ from those of 0.4.x), the fork's own flag decides.
-  `DISPATCHCHECKUP_PATCHLEVEL` is 3.
+- ([#142](https://github.com/MilesCranmer/DispatchDoctor.jl/pull/142), still open) A
+  `TypeInstabilityError` or `TypeInstabilityWarning` keeps the argument types
+  (`arg_types`, `kwarg_types`), not the argument values. Showing a report after the call
+  has unwound (as `Test` does) can no longer read memory the unwinding freed, such as a
+  GPU array owned by the failing call. The printed message is unchanged. DispatchCheckup
+  reads neither field.
+  `DISPATCHCHECKUP_PATCHLEVEL` is 4.
