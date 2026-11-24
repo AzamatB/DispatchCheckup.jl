@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.13.3"
+julia_version = "1.13.4"
 manifest_format = "2.1"
-project_hash = "dc2427a4e5089d4e5118b1864d37d4af6d66d3ff"
+project_hash = "945be49a00eb90a3438033836ccba451e2788b4b"
 
 [[deps.Dates]]
 deps = ["Printf"]
@@ -13,12 +13,12 @@ version = "1.11.0"
 deps = ["DispatchDoctor", "MacroTools", "Scratch", "TOML"]
 path = "."
 uuid = "ca055ede-32eb-4961-937e-82d9c5ec6430"
-version = "0.2.3"
+version = "0.2.8"
 
 [[deps.DispatchDoctor]]
 deps = ["MacroTools", "Preferences"]
-git-tree-sha1 = "9cdf88e07ccdfd4ab64cc144912a035ed6f761cc"
-repo-rev = "fa878702fc0318139eab86c8e7fa179be64cbf8b"
+git-tree-sha1 = "a9c37735e84e4b072161bef51564a645650a003a"
+repo-rev = "0045037e583086b6cbfdffc0a73f9a0b0a39e29d"
 repo-url = "https://github.com/AzamatB/DispatchDoctor.jl"
 uuid = "c2bcafe0-aaa5-4bef-983d-8af4248d41f3"
 version = "0.4.29"
